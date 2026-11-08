@@ -7,6 +7,7 @@ using Platform.Host.Health;
 using Platform.Host.Devices;
 using Platform.Host.Snapshot;
 using Platform.Host.Write;
+using Platform.Host.Mes;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +30,7 @@ builder.Services.AddDriverMc3e();
 
 // 采集链路装配（Host 专属扩展方法，组合根只留"装什么"不留"怎么装"）
 builder.Services.AddAcquisition();
+builder.Services.AddMesOutbox();
 
 var app = builder.Build();
 
@@ -43,6 +45,7 @@ app.MapSnapshotEndpoints();
 app.MapWriteEndpoints();
 app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
+app.MapMesEndpoints();
 app.MapControllers();
 
 app.Run();
