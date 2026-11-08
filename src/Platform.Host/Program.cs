@@ -8,6 +8,7 @@ using Platform.Host.Devices;
 using Platform.Host.Snapshot;
 using Platform.Host.Write;
 using Platform.Host.Mes;
+using Platform.Host.WorkOrders;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,6 +47,7 @@ app.MapWriteEndpoints();
 app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapMesEndpoints();
+app.MapWorkOrderEndpoints();
 app.MapControllers();
 
 app.Run();

@@ -18,6 +18,10 @@ public static class MesServiceCollectionExtensions
         services.AddSingleton<IMesOutboxStore>(serviceProvider =>
             serviceProvider.GetRequiredService<MesOutboxStore>());
 
+        // 工单域（M2-2）：报工三写同事务依赖 WorkOrderStore
+        services.AddSingleton<WorkOrderStore>(serviceProvider =>
+            new WorkOrderStore(serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("Platform")!));
+
         services.AddSingleton<IMesAdapterProvider, MesAdapterProvider>();
         services.AddOptions<MockMesOptions>().BindConfiguration(MockMesOptions.SectionName);
         services.AddSingleton<IMesAdapter, MockMesAdapter>();
