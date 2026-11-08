@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+packages/
+artifacts/
+TestResults/
+*.snk
+appsettings.*.local.json
