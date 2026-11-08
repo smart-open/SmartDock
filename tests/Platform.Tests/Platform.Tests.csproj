@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\src\Platform.Abstractions\Platform.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Platform.Core\Platform.Core.csproj" />
     <ProjectReference Include="..\..\src\Plugins\Driver.ModbusTcp\Driver.ModbusTcp.csproj" />
+    <ProjectReference Include="..\..\src\Plugins\Driver.Mc3e\Driver.Mc3e.csproj" />
   </ItemGroup>
 
 </Project>

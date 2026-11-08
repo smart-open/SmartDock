@@ -1,0 +1,8 @@
+feat: MC 3E driver as second managed protocol (M1-5)
+
+- Driver.Mc3e plugin: 3E binary frame batch read (0x0401), D/W/ZR
+  longest-prefix address parsing, Float32/CDAB
+- E2E verified with Mc3eSimulator: SIM-MC 10 points all Good, 90 rows q=0/10s
+- address parse now precedes connect check in both drivers (config errors
+  no longer masked by connection state)
+- S8 scenario recorded in docs/06; M1-5 marked done in docs/03 13.7.4a

@@ -16,6 +16,7 @@
     <ProjectReference Include="..\Platform.Core\Platform.Core.csproj" />
     <ProjectReference Include="..\Platform.Data\Platform.Data.csproj" />
     <ProjectReference Include="..\Plugins\Driver.ModbusTcp\Driver.ModbusTcp.csproj" />
+    <ProjectReference Include="..\Plugins\Driver.Mc3e\Driver.Mc3e.csproj" />
   </ItemGroup>
 
 </Project>

@@ -89,15 +89,16 @@ public sealed class ModbusTcpDriver : IDeviceDriver
 
     private async Task<ReadValue> ReadSingleAsync(PointRef point, CancellationToken cancellationToken)
     {
-        if (_stream is null)
-        {
-            return Bad(point, "not connected");
-        }
-
+        // 地址解析先行：坏地址与连接状态无关，必须始终报 "bad address"（配置错误不能被连接状态掩盖）
         var parsed = ParseAddress(point.Address);
         if (parsed is null)
         {
             return Bad(point, $"bad address: {point.Address}");
+        }
+
+        if (_stream is null)
+        {
+            return Bad(point, "not connected");
         }
 
         try

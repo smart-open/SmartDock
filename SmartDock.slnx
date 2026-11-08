@@ -8,6 +8,7 @@
   </Folder>
   <Folder Name="/src/Plugins/">
     <Project Path="src/Plugins/Driver.ModbusTcp/Driver.ModbusTcp.csproj" />
+    <Project Path="src/Plugins/Driver.Mc3e/Driver.Mc3e.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Platform.Tests/Platform.Tests.csproj" />
@@ -15,5 +16,6 @@
   <Folder Name="/tools/">
     <Project Path="tools/DbInit/DbInit.csproj" />
     <Project Path="tools/ModbusSlaveSimulator/ModbusSlaveSimulator.csproj" />
+    <Project Path="tools/Mc3eSimulator/Mc3eSimulator.csproj" />
   </Folder>
 </Solution>
