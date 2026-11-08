@@ -51,18 +51,32 @@ public sealed class PollingScheduler : IAsyncDisposable
 
     private async Task PollLoopAsync(CancellationToken cancellationToken)
     {
-        var connect = await _driver.ConnectAsync(cancellationToken);
-        if (!connect.Success)
-        {
-            _logger.LogError("driver connect failed: {Error}", connect.Error);
-            return;
-        }
-
-        _logger.LogInformation("polling started: {PointCount} points, period {Period}", _points.Count, _period);
+        // 5.8 重连语义：连接失败不退出循环，退避重试（现场断电重启后平台必须自愈）
+        var connected = false;
+        var retryCount = 0;
 
         while (!cancellationToken.IsCancellationRequested)
         {
             var iterationStart = DateTime.UtcNow;
+
+            if (!connected)
+            {
+                var connect = await _driver.ConnectAsync(cancellationToken);
+                if (!connect.Success)
+                {
+                    retryCount++;
+                    // 指数退避：1s→2s→4s→…→30s 封顶
+                    var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, retryCount), 30));
+                    _logger.LogWarning("driver connect failed (attempt {Retry}): {Error}, retry in {Backoff}",
+                        retryCount, connect.Error, backoff);
+                    await Task.Delay(backoff, cancellationToken);
+                    continue;
+                }
+
+                connected = true;
+                retryCount = 0;
+                _logger.LogInformation("polling started: {PointCount} points, period {Period}", _points.Count, _period);
+            }
 
             try
             {
@@ -80,6 +94,13 @@ public sealed class PollingScheduler : IAsyncDisposable
                 {
                     await _pipeline.EnqueueAsync(readValue, cancellationToken);
                 }
+
+                // 全部 Bad + 驱动报告连接错误 → 标记断开，下轮走重连
+                if (values.Count > 0 && values.All(v => v.Quality == QualityCode.Bad))
+                {
+                    connected = false;
+                    _logger.LogWarning("all points Bad, marking disconnected for reconnect");
+                }
             }
             catch (OperationCanceledException)
             {
@@ -88,7 +109,8 @@ public sealed class PollingScheduler : IAsyncDisposable
             catch (Exception ex)
             {
                 // 5.8：单轮失败不终止循环，记日志下一轮重试
-                _logger.LogWarning(ex, "poll iteration failed");
+                connected = false;
+                _logger.LogWarning(ex, "poll iteration failed, will reconnect");
             }
 
             var elapsed = DateTime.UtcNow - iterationStart;

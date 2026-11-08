@@ -20,6 +20,7 @@ public sealed class ModbusTcpDriver : IDeviceDriver
     private readonly string _host;
     private readonly int _port;
     private readonly byte _unitId;
+    private string? _lastError;
 
     public ModbusTcpDriver(string host, int port = 502, byte unitId = 1)
     {
@@ -104,6 +105,8 @@ public sealed class ModbusTcpDriver : IDeviceDriver
         }
         catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException)
         {
+            // 通信异常大概率连接已死：主动断开，让下轮轮询走重连（A1 审查项 4）
+            await DisconnectAsync(CancellationToken.None);
             return Bad(point, ex.Message);
         }
     }
@@ -124,7 +127,13 @@ public sealed class ModbusTcpDriver : IDeviceDriver
         }
 
         // MBAP: [tid(2) proto(2) length(2) unit(1)]，PDU = FC(1) + byteCount(1) + data
+        // 坏响应保护：length 至少含 unitId+FC（A1 审查项 2）
         var pduLength = (header[4] << 8) | header[5];   // 含 unitId
+        if (pduLength < 2)
+        {
+            throw new IOException($"invalid MBAP length {pduLength}");
+        }
+
         var pdu = new byte[pduLength - 1];               // 去掉 unitId
         await ReadExactlyAsync(pdu, cancellationToken);
 
@@ -189,7 +198,9 @@ public sealed class ModbusTcpDriver : IDeviceDriver
         }
 
         var registerAddress = modbusAddress - HoldingRegisterBase;
-        if (registerAddress < 0)
+
+        // ushort 溢出保护：>65535 时 (ushort) 会静默回绕（A1 审查项 1）
+        if (registerAddress < 0 || registerAddress > ushort.MaxValue)
         {
             return null;
         }
@@ -214,8 +225,15 @@ public sealed class ModbusTcpDriver : IDeviceDriver
         return BitConverter.Int32BitsToSingle((int)raw);
     }
 
-    private static ReadValue Bad(PointRef point, string reason) =>
-        new(point.PointId, point.DeviceId, null, QualityCode.Bad, DateTime.UtcNow);
+    // 诊断原因暂入 reason，M1 落库时进 error 列（A1 审查项 7：故障可追溯）
+    private ReadValue Bad(PointRef point, string reason)
+    {
+        _lastError = reason;
+        return new(point.PointId, point.DeviceId, null, QualityCode.Bad, DateTime.UtcNow);
+    }
+
+    /// <summary>最近一次 Bad 的诊断原因（健康页/审计用）。</summary>
+    public string? LastError => _lastError;
 
     public async ValueTask DisposeAsync()
     {

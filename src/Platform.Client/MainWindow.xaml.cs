@@ -14,6 +14,7 @@ public partial class MainWindow : Window
 {
     private readonly Services.SnapshotApiClient _apiClient;
     private readonly DispatcherTimer _pollTimer;
+    private bool _refreshing;   // 上一次请求未返回时跳过本轮，防止 API 卡住时请求堆叠
 
     public MainWindow()
     {
@@ -50,6 +51,12 @@ public partial class MainWindow : Window
 
     private async Task RefreshSnapshotAsync()
     {
+        if (_refreshing)
+        {
+            return;   // 跳过本轮（A1 审查项 6：防请求堆叠）
+        }
+
+        _refreshing = true;
         try
         {
             var snapshot = await _apiClient.GetSnapshotAsync();
@@ -65,6 +72,19 @@ public partial class MainWindow : Window
         catch (HttpRequestException ex)
         {
             ErrorText.Text = $"API 不可达：{ex.Message}（请确认 Platform.Host 已启动）";
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or TimeoutException)
+        {
+            ErrorText.Text = $"请求超时：{ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            // 兜底：任何异常都不能崩掉 WPF 进程（async void 会直接崩）
+            ErrorText.Text = $"刷新失败：{ex.GetType().Name}: {ex.Message}";
+        }
+        finally
+        {
+            _refreshing = false;
         }
     }
 

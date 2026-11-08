@@ -26,7 +26,12 @@ public static class AcquisitionServiceCollectionExtensions
         services.AddSingleton<AcquisitionPipeline>(serviceProvider =>
         {
             var copyWriter = serviceProvider.GetRequiredService<PointHistoryCopyWriter>();
-            return new AcquisitionPipeline(copyWriter.WriteAsync);
+            var logger = serviceProvider.GetRequiredService<ILogger<AcquisitionPipeline>>();
+            var pipeline = new AcquisitionPipeline(copyWriter.WriteAsync);
+
+            // 落库失败告警进日志（A1 审查项 5：不可丢语义的观测面）
+            pipeline.FlushError = ex => logger.LogError(ex, "COPY flush failed, batch retained for retry");
+            return pipeline;
         });
 
         // 单设备采集调度器

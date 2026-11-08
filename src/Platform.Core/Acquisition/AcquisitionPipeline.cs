@@ -32,6 +32,12 @@ public sealed class AcquisitionPipeline : IAsyncDisposable
         _consumerTask = ConsumeAsync(_stoppingCts.Token);
     }
 
+    /// <summary>落库失败回调（Host 挂日志/健康页告警；默认静默）。</summary>
+    public Action<Exception>? FlushError { get; set; }
+
+    private void OnFlushError(Exception ex)
+        => FlushError?.Invoke(ex);
+
     /// <summary>生产端：投递一个采集值。队列满时等待（背压）。</summary>
     public ValueTask EnqueueAsync(ReadValue value, CancellationToken cancellationToken = default)
         => _queue.Writer.WriteAsync(value, cancellationToken);
@@ -57,7 +63,19 @@ public sealed class AcquisitionPipeline : IAsyncDisposable
 
             if (batch.Count > 0)
             {
-                await _flushAsync(batch, cancellationToken);
+                try
+                {
+                    await _flushAsync(batch, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // 不可丢语义：落库失败不能让消费者死亡（数据全丢）。
+                    // M0 简版：等待后重试同一批；M1 换 L2 WAL 落盘重放（2.6A.6）
+                    OnFlushError(ex);
+                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                    continue;   // batch 保留，下轮重试
+                }
+
                 batch.Clear();
             }
 

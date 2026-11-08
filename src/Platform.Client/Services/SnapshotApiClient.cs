@@ -7,7 +7,11 @@ namespace Platform.Client.Services;
 /// <summary>快照 API 客户端（B1；客户端不直连数据库，2.3）。</summary>
 public sealed class SnapshotApiClient(string baseAddress)
 {
-    private readonly HttpClient _httpClient = new() { BaseAddress = new Uri(baseAddress) };
+    private readonly HttpClient _httpClient = new()
+    {
+        BaseAddress = new Uri(baseAddress),
+        Timeout = TimeSpan.FromSeconds(5),   // 5s 超时：API 卡死时 UI 能感知而不是无限等
+    };
 
     public async Task<IReadOnlyList<ReadValue>> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
