@@ -8,6 +8,18 @@ public static class SnapshotEndpoints
     public static IEndpointRouteBuilder MapSnapshotEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/snapshot", (PollingScheduler scheduler) => Results.Ok(scheduler.GetSnapshot()));
+        endpoints.MapGet("/api/snapshot/summary", (PollingScheduler scheduler) =>
+        {
+            var snapshot = scheduler.GetSnapshot();
+            return Results.Ok(new
+            {
+                total = snapshot.Count,
+                good = snapshot.Count(v => v.Quality == Platform.Abstractions.QualityCode.Good),
+                bad = snapshot.Count(v => v.Quality == Platform.Abstractions.QualityCode.Bad),
+                uncertain = snapshot.Count(v => v.Quality == Platform.Abstractions.QualityCode.Uncertain),
+                stale = snapshot.Count(v => v.Quality == Platform.Abstractions.QualityCode.Stale),
+            });
+        });
         return endpoints;
     }
 }

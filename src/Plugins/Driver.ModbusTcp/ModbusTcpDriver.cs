@@ -12,6 +12,9 @@ public sealed class ModbusTcpDriver : IDeviceDriver
     // 地址表达式：40001:Float32:CDAB → 保持寄存器 #0 起 2 个字，Float32，字交换
     private const int HoldingRegisterBase = 40001;
 
+    /// <summary>驱动全局唯一标识（7.x device.driver_id 引用）。</summary>
+    public const string DriverId = "driver.modbus.tcp";
+
     private TcpClient? _tcpClient;
     private NetworkStream? _stream;
     private ushort _transactionId;
@@ -30,7 +33,7 @@ public sealed class ModbusTcpDriver : IDeviceDriver
     }
 
     public DriverDescriptor Describe() =>
-        new("driver.modbus.tcp", "Modbus TCP", SupportsWrite: false, MaxBatchPerRequest: 120);
+        new(DriverId, "Modbus TCP", SupportsWrite: false, MaxBatchPerRequest: 120);
 
     public async Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
     {
@@ -103,11 +106,17 @@ public sealed class ModbusTcpDriver : IDeviceDriver
             var value = ParseFloat32(registers, swapWords: parsed.Value.SwapWords);
             return new ReadValue(point.PointId, point.DeviceId, value, QualityCode.Good, DateTime.UtcNow);
         }
-        catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException)
+        catch (Exception ex) when (ex is IOException or SocketException)
         {
             // 通信异常大概率连接已死：主动断开，让下轮轮询走重连（A1 审查项 4）
             await DisconnectAsync(CancellationToken.None);
             return Bad(point, ex.Message);
+        }
+        // OperationCanceledException 不算读失败：停机时不能把 Bad 假值写进快照/落库，
+        // 直接抛给上层（调度器）按取消语义处理（02 §5.7 质量码只描述真实通信结果）。
+        catch (OperationCanceledException)
+        {
+            throw;
         }
     }
 

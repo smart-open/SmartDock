@@ -9,9 +9,9 @@
 | 技术栈 | .NET 8 基线（存量工控机）/ .NET 10（新现场）+ PostgreSQL 16/17 + WPF 客户端；现场 Windows 服务直装，无 Docker |
 | 定位 | 上位机平台（下位机 AI 编程由姊妹项目 [NeuroAxis](https://github.com/smart-open/NeuroAxis) 承担） |
 | 设计文档 | [docs/](docs/) 五个分册 + [docs/architecture.svg](docs/architecture.svg) 整体架构图 |
-| 状态 | **P0 开发中 —— M0 已完成并通过端到端验证** |
+| 状态 | **P0 开发中 —— M0 ✅ 完成；M1 🔨 进行中（台账 + 多设备采集已落地）**。任务清单：[docs/03 §13.7.4a](docs/03_阶段实施计划.md) |
 
-## 当前进展（M0 已完成）
+## 当前进展（M0 ✅ / M1 基础已落地）
 
 一条点位从 PLC 到数据库再到界面的全链路已跑通并自动化验证：
 
@@ -27,8 +27,10 @@ Modbus TCP 从站 → 驱动插件 → 有界队列(背压) → 攒批 COPY → 
 | 数据层 | `point_history` 按月分区 + BRIN 索引；Npgsql 二进制 COPY，时序禁走 EF（§2.4） |
 | API | `/health/live`、`/health/ready`、`/api/snapshot`（H1/B1 最小版） |
 | WPF 客户端 | 快照表格 1s 轮询，5s 超时 + 全异常兜底，只连 API 不直连数据库（§2.3） |
-| 自测工具 | `tools/ModbusSlaveSimulator`（Modbus 从站模拟器）、`tools/DbInit`（建库+DDL+数据验证）、`scripts/run-m0.ps1`（一键 E2E） |
-| 质量门禁 | 构建 0 错 0 警；14/14 单测（含断线重连、flush 失败不丢数据两个韧性回归） |
+| 自测工具 | `tools/ModbusSlaveSimulator`（Modbus 从站模拟器）、`tools/DbInit`（建库+DDL+数据验证+场景 SQL）、`scripts/run-m0.ps1`（一键 E2E）、`scripts/run-scenarios.ps1`（S1~S7 场景回归） |
+| 设备台账（M1） | `device` / `device_point` 表（V002 迁移），Host 启动加载注册表；每设备独立轮询循环，按 `driver_id` 驱动工厂实例化，设备间故障隔离（§5.5 / 3.2） |
+| 场景回归（M1） | S1~S7 七大业务场景 17 项断言全通过（采集正确性 / 多设备 / 韧性自愈 / 停机完整性），案例留档 [docs/06](docs/06_业务场景测试案例.md) |
+| 质量门禁 | 构建 0 错 0 警；15/15 单测（含断线重连、flush 失败不丢数据、多设备故障隔离三个韧性回归） |
 
 ## 快速开始
 

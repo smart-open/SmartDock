@@ -1,0 +1,8 @@
+feat: M1 device registry with DB-driven multi-device acquisition
+
+- device/device_point registry (V002), loaded at Host startup
+- per-device polling loops with driver factory by driver_id
+- scheduler-level crash isolation: factory/loop exceptions back off and retry
+- driver: cancellation no longer recorded as Bad quality values
+- scenario regression S1~S7 (17 assertions) with docs/06 record
+- milestone checklist added to docs/03 §13.7.4a; README/AGENTS updated

@@ -5,7 +5,9 @@ using Platform.Abstractions;
 namespace Platform.Data;
 
 /// <summary>
-/// point_history 浜岃繘鍒?COPY 鍐欏叆鍣紙2.4锛氭椂搴忓啓鍏ョ璧?EF锛夈€?/// 鏀掓壒鍚庝竴娆?COPY锛屽け璐ユ姏鍑鸿涓婂眰璧伴噸璇?闄嶇骇銆?/// </summary>
+/// point_history 二进制 COPY 写入器（2.4：时序写入禁走 EF）。
+/// 攒批后一次 COPY，失败抛出让上层走重试（不可丢语义在 AcquisitionPipeline 兜底）。
+/// </summary>
 public sealed class PointHistoryCopyWriter : IAsyncDisposable
 {
     private readonly NpgsqlDataSource _dataSource;
@@ -16,7 +18,7 @@ public sealed class PointHistoryCopyWriter : IAsyncDisposable
         _dataSource = dataSourceBuilder.Build();
     }
 
-    /// <summary>鎶婁竴鎵归噰闆嗗€?COPY 杩?point_history銆?/summary>
+    /// <summary>把一批采集值 COPY 进 point_history。</summary>
     public async Task WriteAsync(
         IReadOnlyList<ReadValue> batch,
         CancellationToken cancellationToken = default)
