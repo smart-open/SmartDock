@@ -45,12 +45,13 @@ public class ModbusAddressTests
     }
 
     [Fact]
-    public void Descriptor_IsReadOnly()
+    public void Descriptor_SupportsWrite()
     {
+        // M1-6 起 Modbus 实现 IDeviceWriteDriver（FC16），SupportsWrite 翻为 true
         using var driver = new DisposableDriver(new ModbusTcpDriver("127.0.0.1", 5020));
         var descriptor = driver.Describe();
         Assert.Equal("driver.modbus.tcp", descriptor.DriverId);
-        Assert.False(descriptor.SupportsWrite);
+        Assert.True(descriptor.SupportsWrite);
     }
 
     /// <summary>同步测试场景的简易包装（驱动契约是 IAsyncDisposable）。</summary>

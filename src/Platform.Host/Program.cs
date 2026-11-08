@@ -4,6 +4,7 @@ using Driver.Mc3e;
 using Platform.Host.Acquisition;
 using Platform.Host.Health;
 using Platform.Host.Snapshot;
+using Platform.Host.Write;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +33,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapHealthEndpoints();
 app.MapSnapshotEndpoints();
+app.MapWriteEndpoints();
 app.MapControllers();
 
 app.Run();

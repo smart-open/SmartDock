@@ -20,6 +20,7 @@ public sealed class PollingScheduler : IAsyncDisposable
     /// <summary>最新快照（键 = PointId）；多设备循环并发写，读侧锁保护。</summary>
     private readonly Dictionary<long, ReadValue> _snapshot = new();
     private readonly object _snapshotLock = new();
+    private readonly Dictionary<long, IDeviceDriver> _activeDrivers = new();
 
     public PollingScheduler(
         AcquisitionPipeline pipeline,
@@ -54,6 +55,54 @@ public sealed class PollingScheduler : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 按点位 ID 查点位引用（WriteGuard 闸 2/3 用；台账静态，启动后不变）。
+    /// </summary>
+    public PointRef? FindPoint(long pointId)
+    {
+        foreach (var entry in _devices)
+        {
+            foreach (var point in entry.Points)
+            {
+                if (point.PointId == pointId)
+                {
+                    return point;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 按设备 ID 取当前驱动实例（WriteGuard 执行端用；设备循环未启动/无点位时为 null）。
+    /// 驱动实例归采集循环所有：写路径只调用其幂等接口，不管理其生命周期。
+    /// </summary>
+    public IDeviceDriver? FindDriver(long deviceId)
+    {
+        foreach (var entry in _devices)
+        {
+            if (entry.Device.DeviceId != deviceId || entry.Points.Count == 0)
+            {
+                continue;
+            }
+
+            // 驱动实例在设备循环里创建；循环未启动时（极端：Start 前）返回 null 由 WriteGuard 记 FAILED
+            return _activeDrivers.TryGetValue(deviceId, out var driver) ? driver : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>按点位 ID 取最新快照值（WriteGuard 闸 4 回读比对用）。</summary>
+    public ReadValue? GetSnapshotByPoint(long pointId)
+    {
+        lock (_snapshotLock)
+        {
+            return _snapshot.TryGetValue(pointId, out var readValue) ? readValue : null;
+        }
+    }
+
     /// <summary>单设备采集循环：连接退避重试（5.8）→ 周期读 → 快照 + 投递。</summary>
     private async Task PollDeviceLoopAsync(DeviceEntry entry, CancellationToken cancellationToken)
     {
@@ -64,6 +113,7 @@ public sealed class PollingScheduler : IAsyncDisposable
             try
             {
                 driver = _driverFactory(entry.Device);
+                _activeDrivers[entry.Device.DeviceId] = driver;
                 await PollWithDriverAsync(entry, driver, cancellationToken);
                 return;   // 正常退出（取消），不再是"永远失败"的设备
             }
@@ -91,6 +141,8 @@ public sealed class PollingScheduler : IAsyncDisposable
             }
             finally
             {
+                // 驱动随循环退出注销（WriteGuard 之后再来写会得到 FAILED：设备已离线）
+                _activeDrivers.Remove(entry.Device.DeviceId);
                 // 驱动实例随设备循环结束释放（5.12：连接管理归平台）
                 if (driver is not null)
                 {

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Platform.Abstractions;
 using Platform.Core.Acquisition;
 using Platform.Data;
+using Platform.Host.Write;
 
 namespace Platform.Host.Acquisition;
 
@@ -46,6 +47,32 @@ public static class AcquisitionServiceCollectionExtensions
         {
             var connectionString = serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("Platform");
             return new DeviceRegistryStore(connectionString!);
+        });
+
+        // 写命令落库（5.6 闸 3 载体）
+        services.AddSingleton<WriteCommandStore>(serviceProvider =>
+        {
+            var connectionString = serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("Platform");
+            return new WriteCommandStore(connectionString!);
+        });
+
+        // WriteGuard 四道闸（5.6）：权限留痕在 API 层，互锁注入，先落库，回读比对
+        services.AddSingleton<WriteGuard>(serviceProvider =>
+        {
+            var scheduler = serviceProvider.GetRequiredService<PollingScheduler>();
+            var writeStore = serviceProvider.GetRequiredService<WriteCommandStore>();
+            var logger = serviceProvider.GetRequiredService<ILogger<WriteGuard>>();
+
+            return new WriteGuard(
+                driverResolver: scheduler.FindDriver,
+                pointResolver: scheduler.FindPoint,
+                persistAsync: (pointId, value) => writeStore.InsertPendingAsync(pointId, value, "m1-operator"),
+                markRejectedAsync: (commandId, reason) => writeStore.MarkRejectedAsync(commandId, reason),
+                markSentAsync: commandId => writeStore.MarkSentAsync(commandId),
+                finishAsync: (commandId, error, verified, readBack) =>
+                    writeStore.FinishAsync(commandId, verified, error, readBack),
+                snapshotLookupAsync: pointId => Task.FromResult(scheduler.GetSnapshotByPoint(pointId)),
+                logger: logger);
         });
 
         // 驱动注册表：实现来自 DI（各插件提供 IDeviceDriverFactory，4.8.1），

@@ -7,6 +7,10 @@ var listener = new TcpListener(IPAddress.Any, 5020);
 listener.Start();
 Console.WriteLine("Modbus TCP slave simulator listening on 0.0.0.0:5020 (FC03, unit 1, 20 registers)");
 
+// FC16 写过的寄存器槽（按绝对寄存器地址记录；WriteGuard 回读验证依赖写后保持）
+const int WrittenRegisterSlots = 256;
+var writtenRegisters = new ushort?[WrittenRegisterSlots];
+
 while (true)
 {
     var tcpClient = await listener.AcceptTcpClientAsync();
@@ -52,6 +56,23 @@ async Task HandleClientAsync(TcpClient client)
                 response = BuildReadResponse(buffer, count);
                 Console.WriteLine($"FC03 read {count} registers @ {start}");
             }
+            else if (functionCode == 0x10)
+            {
+                // FC16 预置多寄存器：写入值覆盖 sine 动态值（WriteGuard 回读验证需要写后保持）
+                var start = (buffer[8] << 8) | buffer[9];
+                var count = (ushort)((buffer[10] << 8) | buffer[11]);
+                var byteCount = buffer[12];
+                for (var i = 0; i < count && 13 + i * 2 + 1 < 13 + byteCount; i++)
+                {
+                    writtenRegisters[(start + (ushort)i) % WrittenRegisterSlots] =
+                        (ushort)((buffer[13 + i * 2] << 8) | buffer[14 + i * 2]);
+                }
+
+                // 正常应答：回显起始地址 + 寄存器数量
+                response = [buffer[0], buffer[1], 0x00, 0x00, 0x00, 0x06, buffer[6], 0x10,
+                            buffer[8], buffer[9], buffer[10], buffer[11]];
+                Console.WriteLine($"FC16 write {count} registers @ {start}");
+            }
             else
             {
                 // 不支持的功能码 → Modbus 异常响应
@@ -84,7 +105,11 @@ byte[] BuildReadResponse(byte[] request, ushort count)
 
     for (var i = 0; i < count; i++)
     {
-        var registerValue = GenerateRegisterValue(i);
+        // 已被 FC16 写过的寄存器保持写入值（回读验证）；其余按 sine 动态生成
+        var written = (ushort)((request[8] << 8) | request[9]);
+        var absoluteIndex = (int)(written + (uint)i);
+        var registerValue = writtenRegisters[absoluteIndex % WrittenRegisterSlots]
+            ?? GenerateRegisterValue(i);
         response[9 + i * 2] = (byte)(registerValue >> 8);
         response[10 + i * 2] = (byte)(registerValue & 0xFF);
     }

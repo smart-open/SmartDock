@@ -4,10 +4,10 @@ using Platform.Abstractions;
 namespace Driver.ModbusTcp;
 
 /// <summary>
-/// Modbus TCP 驱动（M0：只读保持寄存器，Float32/CDAB）。
+/// Modbus TCP 驱动（M0 读：FC03 保持寄存器，Float32/CDAB；M1 写：FC16 预置多寄存器）。
 /// 协议逻辑严格保留在本文件内；连接管理/重试/落库归平台（5.12）。
 /// </summary>
-public sealed class ModbusTcpDriver : IDeviceDriver
+public sealed class ModbusTcpDriver : IDeviceWriteDriver
 {
     // 地址表达式：40001:Float32:CDAB → 保持寄存器 #0 起 2 个字，Float32，字交换
     private const int HoldingRegisterBase = 40001;
@@ -33,7 +33,7 @@ public sealed class ModbusTcpDriver : IDeviceDriver
     }
 
     public DriverDescriptor Describe() =>
-        new(DriverId, "Modbus TCP", SupportsWrite: false, MaxBatchPerRequest: 120);
+        new(DriverId, "Modbus TCP", SupportsWrite: true, MaxBatchPerRequest: 120);
 
     public async Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
     {
@@ -180,6 +180,105 @@ public sealed class ModbusTcpDriver : IDeviceDriver
         (byte)(startAddress >> 8), (byte)(startAddress & 0xFF),
         (byte)(count >> 8), (byte)(count & 0xFF),
     ];
+
+    /// <summary>
+    /// 写单个 Float32（FC16 预置多寄存器，2 个寄存器，CDAB 低字在前）。
+    /// 5.6 第四道闸的执行端：写完由平台回读校验，这里只负责下发。
+    /// </summary>
+    public async Task<WriteResult> WriteAsync(PointRef point, double value, CancellationToken cancellationToken = default)
+    {
+        var parsed = ParseAddress(point.Address);
+        if (parsed is null)
+        {
+            return new WriteResult(false, $"bad address: {point.Address}");
+        }
+
+        if (_stream is null)
+        {
+            return new WriteResult(false, "not connected");
+        }
+
+        try
+        {
+            var raw = BitConverter.SingleToUInt32Bits((float)value);
+            // CDAB：低字在前（与读侧 SwapWords 一致）
+            var lowWord = (ushort)(raw & 0xFFFF);
+            var highWord = (ushort)(raw >> 16);
+            ushort[] words = parsed.Value.SwapWords ? [lowWord, highWord] : [highWord, lowWord];
+
+            _transactionId++;
+            var request = BuildWriteRequest(_transactionId, _unitId, parsed.Value.RegisterAddress, words);
+            await _stream.WriteAsync(request, cancellationToken);
+
+            var header = new byte[7];
+            await ReadExactlyAsync(header, cancellationToken);
+
+            var responseTransactionId = (ushort)((header[0] << 8) | header[1]);
+            if (responseTransactionId != _transactionId)
+            {
+                throw new IOException($"transaction id mismatch: {responseTransactionId} != {_transactionId}");
+            }
+
+            var pduLength = (header[4] << 8) | header[5];
+            if (pduLength < 2)
+            {
+                throw new IOException($"invalid MBAP length {pduLength}");
+            }
+
+            var pdu = new byte[pduLength - 1];
+            await ReadExactlyAsync(pdu, cancellationToken);
+
+            if ((pdu[0] & 0x80) != 0)
+            {
+                return new WriteResult(false, $"modbus exception code {pdu[1]:X2}");
+            }
+
+            // FC16 正常应答回显起始地址 + 数量；校验防错位
+            var echoedStart = (ushort)((pdu[2] << 8) | pdu[3]);
+            if (echoedStart != parsed.Value.RegisterAddress)
+            {
+                return new WriteResult(false, $"echoed start {echoedStart} != requested {parsed.Value.RegisterAddress}");
+            }
+
+            return new WriteResult(true, null);
+        }
+        catch (Exception ex) when (ex is IOException or SocketException)
+        {
+            await DisconnectAsync(CancellationToken.None);
+            return new WriteResult(false, ex.Message);
+        }
+        // OperationCanceledException 按取消语义上抛（与读侧一致：停机不产生假结果）
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+    }
+
+    private static byte[] BuildWriteRequest(ushort transactionId, byte unitId, ushort startAddress, ushort[] words)
+    {
+        var byteCount = words.Length * 2;
+        var request = new byte[14 + byteCount];   // MBAP7 + FC1 + 起始2 + 数量2 + 字节数1 + 数据
+        request[0] = (byte)(transactionId >> 8);
+        request[1] = (byte)(transactionId & 0xFF);
+        request[2] = 0x00;
+        request[3] = 0x00;
+        request[4] = 0x00;
+        request[5] = (byte)(7 + byteCount);       // 后续长度
+        request[6] = unitId;
+        request[7] = 0x10;                        // FC16: preset multiple registers
+        request[8] = (byte)(startAddress >> 8);
+        request[9] = (byte)(startAddress & 0xFF);
+        request[10] = (byte)(words.Length >> 8);
+        request[11] = (byte)(words.Length & 0xFF);
+        request[12] = (byte)byteCount;
+        for (var i = 0; i < words.Length; i++)
+        {
+            request[13 + i * 2] = (byte)(words[i] >> 8);
+            request[14 + i * 2] = (byte)(words[i] & 0xFF);
+        }
+
+        return request;
+    }
 
     private async Task ReadExactlyAsync(byte[] buffer, CancellationToken cancellationToken)
     {
