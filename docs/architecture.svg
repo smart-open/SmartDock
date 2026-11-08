@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" font-family="Microsoft YaHei, PingFang SC, sans-serif" width="1480" height="1080" viewBox="0 0 1480 1080">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowD" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1480" height="1080" fill="#f8fafc"/>
+  <text x="740" y="34" text-anchor="middle" font-size="22" font-weight="bold" fill="#0f172a">SmartDock 整体技术架构 v1.7（桌面单机形态 · 无 Docker）</text>
+  <text x="740" y="56" text-anchor="middle" font-size="12" fill="#64748b">实线 = 默认链路　虚线 = 可选能力（开关/加装）　net8.0 基线（存量工控机）/ net10（新现场）</text>
+
+  <!-- ============ 客户端 ============ -->
+  <rect x="490" y="76" width="620" height="84" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+  <text x="800" y="102" text-anchor="middle" font-size="14" font-weight="bold" fill="#3730a3">WPF 客户端（MVVM · CommunityToolkit）</text>
+  <text x="800" y="124" text-anchor="middle" font-size="11.5" fill="#4338ca">每操作站一份 · ScottPlot 5 图表 · 不直连数据库</text>
+  <text x="800" y="144" text-anchor="middle" font-size="11.5" fill="#4338ca">HTTPS + SignalR · 断网冻结写入口并显示最后更新时间</text>
+
+  <!-- ============ 南向设备 ============ -->
+  <rect x="30" y="220" width="150" height="230" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="105" y="248" text-anchor="middle" font-size="15" font-weight="bold" fill="#9a3412">现场设备</text>
+  <text x="105" y="280" text-anchor="middle" font-size="12" fill="#7c2d12">PLC（Modbus/S7/MC）</text>
+  <text x="105" y="302" text-anchor="middle" font-size="12" fill="#7c2d12">OPC UA · 仪表</text>
+  <text x="105" y="324" text-anchor="middle" font-size="12" fill="#7c2d12">相机（GigE/USB3）</text>
+  <text x="105" y="346" text-anchor="middle" font-size="12" fill="#7c2d12">运动卡（32位DLL）</text>
+  <text x="105" y="368" text-anchor="middle" font-size="12" fill="#7c2d12">机器人 · AGV</text>
+  <text x="105" y="404" text-anchor="middle" font-size="11" fill="#9a3412">产线 VLAN</text>
+
+  <!-- ============ PluginHost ============ -->
+  <rect x="220" y="196" width="230" height="290" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="335" y="222" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e40af">PluginHost.exe（进程外）</text>
+  <text x="335" y="242" text-anchor="middle" font-size="10.5" fill="#1d4ed8">32位/原生SDK 隔离 · 崩溃互不影响</text>
+  <rect x="236" y="254" width="198" height="46" rx="6" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="335" y="273" text-anchor="middle" font-size="12" fill="#1e3a8a">南向驱动插件</text>
+  <text x="335" y="291" text-anchor="middle" font-size="10.5" fill="#1e3a8a">Modbus · S7 · MC · OPC UA</text>
+  <rect x="236" y="308" width="198" height="46" rx="6" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="335" y="327" text-anchor="middle" font-size="12" fill="#1e3a8a">设备大类插件</text>
+  <text x="335" y="345" text-anchor="middle" font-size="10.5" fill="#1e3a8a">相机 · 运动卡 · 机器人</text>
+  <rect x="236" y="362" width="198" height="46" rx="6" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="335" y="381" text-anchor="middle" font-size="12" fill="#1e3a8a">视觉引擎封装</text>
+  <text x="335" y="399" text-anchor="middle" font-size="10.5" fill="#1e3a8a">Halcon · VP · VM · OpenCV</text>
+  <text x="335" y="432" text-anchor="middle" font-size="11" fill="#1e40af">gRPC（Abstractions 契约）</text>
+  <text x="335" y="450" text-anchor="middle" font-size="10.5" fill="#64748b">签名校验 · 心跳 · 崩溃自动重启</text>
+
+  <!-- ============ 主进程 ============ -->
+  <rect x="490" y="184" width="640" height="650" rx="12" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+  <text x="810" y="212" text-anchor="middle" font-size="16" font-weight="bold" fill="#0f172a">Platform.Host（.NET 8/10 自包含单文件 · Windows 服务）</text>
+
+  <!-- API 层 -->
+  <rect x="510" y="228" width="600" height="96" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="524" y="250" font-size="13" font-weight="bold" fill="#065f46">应用层（Kestrel）</text>
+  <rect x="524" y="258" width="176" height="54" rx="6" fill="#d1fae5" stroke="#10b981"/>
+  <text x="612" y="280" text-anchor="middle" font-size="12" fill="#064e3b">REST API + OpenAPI</text>
+  <text x="612" y="300" text-anchor="middle" font-size="10.5" fill="#064e3b">Asp.Versioning 契约稳定面</text>
+  <rect x="712" y="258" width="150" height="54" rx="6" fill="#d1fae5" stroke="#10b981"/>
+  <text x="787" y="280" text-anchor="middle" font-size="12" fill="#064e3b">SignalR 实时推送</text>
+  <text x="787" y="300" text-anchor="middle" font-size="10.5" fill="#064e3b">报警 / 看板 / 点位</text>
+  <rect x="874" y="258" width="220" height="54" rx="6" fill="#d1fae5" stroke="#10b981"/>
+  <text x="984" y="280" text-anchor="middle" font-size="12" font-weight="bold" fill="#064e3b">内嵌文件服务 /files/*</text>
+  <text x="984" y="300" text-anchor="middle" font-size="10.5" fill="#064e3b">JWT 鉴权 · 目录即存储（默认）</text>
+
+  <!-- 内核不可关 -->
+  <rect x="510" y="340" width="600" height="86" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="524" y="362" font-size="13" font-weight="bold" fill="#991b1b">内核（常开，不可关闭）</text>
+  <rect x="524" y="370" width="180" height="44" rx="6" fill="#fee2e2" stroke="#ef4444"/>
+  <text x="614" y="388" text-anchor="middle" font-size="12" fill="#7f1d1d">RBAC + JWT</text>
+  <text x="614" y="406" text-anchor="middle" font-size="10.5" fill="#7f1d1d">security.rbac 常开</text>
+  <rect x="716" y="370" width="180" height="44" rx="6" fill="#fee2e2" stroke="#ef4444"/>
+  <text x="806" y="388" text-anchor="middle" font-size="12" fill="#7f1d1d">审计链（哈希链）</text>
+  <text x="806" y="406" text-anchor="middle" font-size="10.5" fill="#7f1d1d">security.auditChain 常开</text>
+  <rect x="908" y="370" width="186" height="44" rx="6" fill="#fee2e2" stroke="#ef4444"/>
+  <text x="1001" y="388" text-anchor="middle" font-size="12" fill="#7f1d1d">FeatureGate</text>
+  <text x="1001" y="406" text-anchor="middle" font-size="10.5" fill="#7f1d1d">70 项开关矩阵（2.7）</text>
+
+  <!-- 领域模块 -->
+  <rect x="510" y="442" width="600" height="70" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="524" y="464" font-size="13" font-weight="bold" fill="#5b21b6">领域模块（互不 using，只走事件/接口/表）</text>
+  <g font-size="12" fill="#4c1d95">
+    <rect x="524" y="472" width="106" height="28" rx="6" fill="#ede9fe" stroke="#a78bfa"/><text x="577" y="491" text-anchor="middle">Identity</text>
+    <rect x="640" y="472" width="106" height="28" rx="6" fill="#ede9fe" stroke="#a78bfa"/><text x="693" y="491" text-anchor="middle">Device</text>
+    <rect x="756" y="472" width="106" height="28" rx="6" fill="#ede9fe" stroke="#a78bfa"/><text x="809" y="491" text-anchor="middle">Mes</text>
+    <rect x="872" y="472" width="106" height="28" rx="6" fill="#ede9fe" stroke="#a78bfa"/><text x="925" y="491" text-anchor="middle">Report</text>
+    <rect x="988" y="472" width="106" height="28" rx="6" fill="#ede9fe" stroke="#a78bfa"/><text x="1041" y="491" text-anchor="middle">Audit</text>
+  </g>
+
+  <!-- 2.6A 流水线 -->
+  <rect x="510" y="528" width="600" height="142" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="524" y="550" font-size="13" font-weight="bold" fill="#92400e">2.6A 有界队列流水线（背压 · 分队列 · 大图句柄，P0）</text>
+  <g font-size="11">
+    <rect x="524" y="560" width="136" height="42" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="592" y="578" text-anchor="middle" fill="#78350f" font-weight="bold">Q1 告警 P0</text>
+    <text x="592" y="594" text-anchor="middle" fill="#78350f">阻塞 + WAL 双写</text>
+    <rect x="670" y="560" width="136" height="42" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="738" y="578" text-anchor="middle" fill="#78350f" font-weight="bold">Q2 指令 P1</text>
+    <text x="738" y="594" text-anchor="middle" fill="#78350f">阻塞 · 保序</text>
+    <rect x="816" y="560" width="136" height="42" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="884" y="578" text-anchor="middle" fill="#78350f" font-weight="bold">Q3 点值/结果 P2</text>
+    <text x="884" y="594" text-anchor="middle" fill="#78350f">攒批 COPY</text>
+    <rect x="962" y="560" width="132" height="42" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="1028" y="578" text-anchor="middle" fill="#78350f" font-weight="bold">Q4 图像 P3</text>
+    <text x="1028" y="594" text-anchor="middle" fill="#78350f">仅 FrameRef 句柄</text>
+  </g>
+  <text x="524" y="624" font-size="10.5" fill="#92400e">背压传递：应用层 Wait → 降采样 → 硬件降帧/缩 ROI</text>
+  <text x="524" y="642" font-size="10.5" fill="#92400e">ArrayPool 内存池 · 不搬像素 · 三级不丢（L1 内存/L2 落盘/L3 幂等 ACK）</text>
+  <text x="524" y="660" font-size="10.5" fill="#b45309">P4 日志/审计 → Serilog 异步刷盘（环形缓冲）</text>
+
+  <!-- Worker 组件 -->
+  <rect x="510" y="686" width="600" height="58" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="524" y="708" font-size="13" font-weight="bold" fill="#334155">后台 Worker（同进程）</text>
+  <g font-size="11.5" fill="#1e293b">
+    <rect x="524" y="716" width="136" height="22" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="592" y="731" text-anchor="middle">DeviceRuntime 采集</text>
+    <rect x="670" y="716" width="136" height="22" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="738" y="731" text-anchor="middle">MesWorker Outbox</text>
+    <rect x="816" y="716" width="136" height="22" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="884" y="731" text-anchor="middle">VisionService 编排</text>
+    <rect x="962" y="716" width="132" height="22" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="1028" y="731" text-anchor="middle">Scheduler Quartz</text>
+  </g>
+
+  <!-- 数据访问 -->
+  <rect x="510" y="760" width="600" height="56" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="524" y="782" font-size="11.5" fill="#334155">数据访问：EF Core（业务）· Npgsql 二进制 COPY（点值）· Dapper（报表只读）</text>
+  <text x="524" y="802" font-size="11.5" fill="#334155">IMemoryCache + 版本号失效 · IQueueTransport（BoundedChannel 默认）· Serilog 文件日志</text>
+
+  <!-- ============ 数据层 ============ -->
+  <rect x="250" y="880" width="430" height="112" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="465" y="906" text-anchor="middle" font-size="14" font-weight="bold" fill="#14532d">数据层（本地数据盘，独立于系统盘）</text>
+  <rect x="270" y="920" width="190" height="56" rx="6" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="365" y="942" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#14532d">PostgreSQL 16/17</text>
+  <text x="365" y="960" text-anchor="middle" font-size="10.5" fill="#166534">分区 · COPY · SKIP LOCKED · PITR</text>
+  <rect x="472" y="920" width="188" height="56" rx="6" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="566" y="942" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#14532d">文件存储（IFileStore）</text>
+  <text x="566" y="960" text-anchor="middle" font-size="10.5" fill="#166534">默认本地磁盘 + HTTP URL</text>
+
+  <!-- MinIO 可选 -->
+  <rect x="710" y="880" width="200" height="112" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="810" y="906" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#475569">MinIO（可选）</text>
+  <text x="810" y="928" text-anchor="middle" font-size="10.5" fill="#64748b">开关 storage.s3（2.7 E8）</text>
+  <text x="810" y="946" text-anchor="middle" font-size="10.5" fill="#64748b">图像 &gt; 50 GB / 多机才加装</text>
+  <text x="810" y="964" text-anchor="middle" font-size="10.5" fill="#64748b">S3 兼容 · 单二进制</text>
+
+  <!-- Redis 可选 -->
+  <rect x="940" y="880" width="200" height="112" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="1040" y="906" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#475569">Redis（可选）</text>
+  <text x="1040" y="928" text-anchor="middle" font-size="10.5" fill="#64748b">开关 cache.distributed（E7）</text>
+  <text x="1040" y="946" text-anchor="middle" font-size="10.5" fill="#64748b">默认 IMemoryCache + Channel</text>
+  <text x="1040" y="964" text-anchor="middle" font-size="10.5" fill="#64748b">开启后队列切 Redis Stream</text>
+
+  <!-- 观测 -->
+  <rect x="1170" y="880" width="280" height="112" rx="10" fill="#fff7ed" stroke="#f97316" stroke-width="1.5"/>
+  <text x="1310" y="906" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#7c2d12">可观测与运维</text>
+  <text x="1310" y="928" text-anchor="middle" font-size="10.5" fill="#9a3412">Serilog 四类文件日志 · 健康页 H1</text>
+  <text x="1310" y="946" text-anchor="middle" font-size="10.5" fill="#9a3412">每日 pg_dump + WAL 归档 → PITR</text>
+  <text x="1310" y="964" text-anchor="middle" font-size="10.5" fill="#9a3412">Seq / Grafana（开发或 Pro 档，可选）</text>
+
+  <!-- ============ 北向 ============ -->
+  <rect x="1200" y="196" width="250" height="200" rx="10" fill="#fdf4ff" stroke="#a21caf" stroke-width="1.5"/>
+  <text x="1325" y="224" text-anchor="middle" font-size="15" font-weight="bold" fill="#701a75">北向系统</text>
+  <text x="1325" y="250" text-anchor="middle" font-size="12" fill="#86198f">MES（Outbox 先落库后投递）</text>
+  <text x="1325" y="272" text-anchor="middle" font-size="12" fill="#86198f">ERP / WMS / QMS</text>
+  <text x="1325" y="294" text-anchor="middle" font-size="12" fill="#86198f">SAP · 用友 · 金蝶 · WebService</text>
+  <text x="1325" y="320" text-anchor="middle" font-size="10.5" fill="#a21caf">幂等键 · 每日对账 · 死信重放</text>
+  <text x="1325" y="340" text-anchor="middle" font-size="10.5" fill="#a21caf">断网 7 天边缘缓存续传</text>
+  <text x="1325" y="366" text-anchor="middle" font-size="10.5" fill="#64748b">只走 443/8443 出站</text>
+
+  <!-- ============ 连线 ============ -->
+  <line x1="800" y1="160" x2="800" y2="182" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="180" y1="330" x2="220" y2="330" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="200" y="320" text-anchor="middle" font-size="10" fill="#475569">TCP/485</text>
+  <line x1="450" y1="340" x2="490" y2="340" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="470" y="330" text-anchor="middle" font-size="10" fill="#475569">gRPC</text>
+  <line x1="600" y1="816" x2="480" y2="880" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="508" y="850" text-anchor="middle" font-size="10" fill="#475569">EF / COPY</text>
+  <line x1="780" y1="816" x2="600" y2="920" stroke="#475569" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <line x1="680" y1="948" x2="710" y2="948" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrowD)"/>
+  <text x="695" y="938" text-anchor="middle" font-size="10" fill="#94a3b8">切换</text>
+  <line x1="900" y1="816" x2="1020" y2="880" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrowD)"/>
+  <line x1="1130" y1="300" x2="1200" y2="290" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1200" y1="360" x2="990" y2="880" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrowD)"/>
+  <text x="1130" y="620" text-anchor="middle" font-size="10" fill="#94a3b8">图像 URL 回看</text>
+  <line x1="1060" y1="816" x2="1280" y2="880" stroke="#475569" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <line x1="465" y1="992" x2="465" y2="1024" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <line x1="465" y1="1024" x2="1310" y2="1024" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrowD)"/>
+  <line x1="1310" y1="1024" x2="1310" y2="992" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrowD)"/>
+  <text x="880" y="1018" text-anchor="middle" font-size="10" fill="#94a3b8">每日备份 / WAL 归档 → 备份盘（集团/云可选）</text>
+
+  <!-- 图例 -->
+  <rect x="30" y="500" width="150" height="150" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="105" y="526" text-anchor="middle" font-size="13" font-weight="bold" fill="#334155">图例</text>
+  <line x1="45" y1="548" x2="85" y2="548" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="93" y="552" font-size="11" fill="#475569">默认链路</text>
+  <line x1="45" y1="576" x2="85" y2="576" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrowD)"/>
+  <text x="93" y="580" font-size="11" fill="#64748b">可选能力</text>
+  <rect x="45" y="598" width="40" height="14" rx="3" fill="#fee2e2" stroke="#ef4444"/>
+  <text x="93" y="609" font-size="11" fill="#64748b">常开内核</text>
+  <rect x="45" y="620" width="40" height="14" rx="3" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="93" y="631" font-size="11" fill="#64748b">有界队列</text>
+</svg>

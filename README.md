@@ -6,9 +6,9 @@
 
 | 项 | 内容 |
 |---|---|
-| 技术栈 | .NET 8（ASP.NET Core + EF Core + WPF 客户端）+ PostgreSQL 16 + Redis 7 |
+| 技术栈 | .NET 8 基线（存量工控机）/ .NET 10（新现场）+ PostgreSQL 16/17 + WPF 客户端；现场 Windows 服务直装，无 Docker |
 | 定位 | 上位机平台（下位机 AI 编程由姊妹项目 [NeuroAxis](https://github.com/smart-open/NeuroAxis) 承担） |
-| 设计文档 | [docs/](docs/) 下五个分册（见下表）；合订本 [docs/design.md](docs/design.md) |
+| 设计文档 | [docs/](docs/) 下五个分册（见下表）；[docs/architecture.svg](docs/architecture.svg) 为整体架构图 |
 
 ## 核心能力
 
@@ -20,19 +20,17 @@
 
 ## 状态
 
-设计文档阶段（v1.6，2026-11-08）。
+设计文档阶段（v1.7，2026-11-08）。
 
 ## 文档结构
 
 | 分册 | 内容 | 读者 |
 |---|---|---|
-| [01 产品需求与目标](docs/01-product-requirements.md) | 品牌定位、痛点、目标 G1~G7、量化指标、明确不做项 | 全员 / 甲方 |
-| [02 产品技术设计](docs/02-technical-design.md) | 架构、插件体系、设备/MES 接入、数据、报表、权限审计、二次开发手册、附录 | 开发 / 架构师 |
-| [03 阶段实施计划](docs/03-implementation-plan.md) | P0/P1/P2 范围、人月排期、风险登记册、发行版矩阵、里程碑 M0~M3 | 技术负责人 / PM |
-| [04 阶段验收标准](docs/04-acceptance-criteria.md) | 41 条验收清单（P0 与按项目分界）+ 发布前检查清单 | 验收 / 测试 |
-| [05 测试与部署](docs/05-testing-and-deployment.md) | 环境矩阵、离线安装、最小 BOM 与实测表、签名/SBOM、割接、SLA | 实施 / 运维 |
-
-> 维护提示：`docs/design.md` 是合订本快照，正式修改请改分册；分册与合订本暂由 `docs/split-design.ps1` 生成脚本关联。
+| [01 产品需求与目标](docs/01_产品需求与目标.md) | 品牌定位、痛点、目标 G1~G7、量化指标、明确不做项 | 全员 / 甲方 |
+| [02 产品技术设计](docs/02_产品技术设计.md) | 架构、插件体系、设备/MES 接入、数据、报表、权限审计、二次开发手册、附录 | 开发 / 架构师 |
+| [03 阶段实施计划](docs/03_阶段实施计划.md) | P0/P1/P2 范围、人月排期、风险登记册、发行版矩阵、里程碑 M0~M3 | 技术负责人 / PM |
+| [04 阶段验收标准](docs/04_阶段验收标准.md) | 41 条验收清单（P0 与按项目分界）+ 发布前检查清单 | 验收 / 测试 |
+| [05 测试与部署](docs/05_测试与部署.md) | 环境矩阵、离线安装、最小 BOM 与实测表、签名/SBOM、割接、SLA | 实施 / 运维 |
 bin/
 obj/
 .vs/
