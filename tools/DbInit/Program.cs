@@ -1,4 +1,6 @@
 using Npgsql;
+using System.Security.Cryptography;
+using Platform.Core.Security;
 
 // 一次性执行 deploy/sql 下的迁移脚本（M0 简版；M1 换正式迁移体系）
 // 用法：
@@ -8,8 +10,10 @@ using Npgsql;
 //   dotnet run --project tools/DbInit -- --sqlfile <路径>         执行 SQL 文件（多语句，整文件一次执行）
 //   dotnet run --project tools/DbInit -- --scalar "<查询>"        执行查询返回单值（场景断言用）
 //   dotnet run --project tools/DbInit -- --scalarfile <路径>      执行查询文件返回单值（场景断言用，避开 PS 引号问题）
+//   dotnet run --project tools/DbInit -- --seed-users             种子 RBAC 账号（PBKDF2 运行时生成，见 V004 尾注）
 var rawArgs = args.ToList();
 var verifyMode = rawArgs.Remove("--verify");
+var seedUsersMode = rawArgs.Remove("--seed-users");
 
 var sqlMode = rawArgs.Remove("--sql");
 var sqlFileMode = rawArgs.Remove("--sqlfile");
@@ -33,6 +37,57 @@ var connectionString = rawArgs.Count > 0
     ? rawArgs[0]
     : "Host=192.168.106.128;Port=5435;Database=postgres;Username=postgres;Password=Postgres123!";
 var dbConnectionString = new NpgsqlConnectionStringBuilder(connectionString) { Database = "smartdock" }.ConnectionString;
+
+// 种子账号模式：admin/Admin@123（全权）+ op001/Op@123（操作员）。
+// 口令哈希必须 dotnet 侧运行时生成（V004 尾注）；口令值本身只存在于本工具的默认参数中，
+// 不进 SQL、不进仓库配置。生产环境通过环境变量 SEED_ADMIN_PASSWORD / SEED_OPERATOR_PASSWORD 覆盖。
+if (seedUsersMode)
+{
+    await using var seedConnection = new NpgsqlConnection(dbConnectionString);
+    await seedConnection.OpenAsync();
+
+    await SeedUserAsync(seedConnection, "admin", "系统管理员",
+        Environment.GetEnvironmentVariable("SEED_ADMIN_PASSWORD") ?? "Admin@123", ["admin"]);
+    await SeedUserAsync(seedConnection, "op001", "操作员一号",
+        Environment.GetEnvironmentVariable("SEED_OPERATOR_PASSWORD") ?? "Op@123", ["operator"]);
+
+    Console.WriteLine("seed users complete");
+    return;
+}
+
+static async Task SeedUserAsync(NpgsqlConnection connection, string userCode, string userName,
+    string password, string[] roleCodes)
+{
+    // 口令哈希格式与 Platform.Host.Auth.PasswordHasher 一致：iterations.salt.hex
+    var stored = PasswordHasher.Hash(password);
+
+    await using var upsert = connection.CreateCommand();
+    upsert.CommandText = """
+        INSERT INTO sys_user (user_code, user_name, password_hash)
+        VALUES (@code, @name, @hash)
+        ON CONFLICT (user_code) DO UPDATE SET password_hash = EXCLUDED.password_hash, status = 1
+        RETURNING id
+        """;
+    upsert.Parameters.AddWithValue("code", userCode);
+    upsert.Parameters.AddWithValue("name", userName);
+    upsert.Parameters.AddWithValue("hash", stored);
+    var userId = (long)(await upsert.ExecuteScalarAsync())!;
+
+    foreach (var roleCode in roleCodes)
+    {
+        await using var role = connection.CreateCommand();
+        role.CommandText = """
+            INSERT INTO sys_user_role (user_id, role_id)
+            SELECT @user_id, id FROM sys_role WHERE role_code = @role_code
+            ON CONFLICT DO NOTHING
+            """;
+        role.Parameters.AddWithValue("user_id", userId);
+        role.Parameters.AddWithValue("role_code", roleCode);
+        await role.ExecuteNonQueryAsync();
+    }
+
+    Console.WriteLine($"seeded user {userCode} roles=[{string.Join(',', roleCodes)}]");
+}
 
 // 场景模式：只需要 smartdock 库连接，跳过建库/DDL 流程
 if (sqlMode || sqlFileMode || scalarMode || scalarFileMode)

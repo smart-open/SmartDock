@@ -1,12 +1,19 @@
 using System.Text.Json.Serialization;
 using Driver.ModbusTcp;
 using Driver.Mc3e;
+using Platform.Host.Auth;
 using Platform.Host.Acquisition;
 using Platform.Host.Health;
+using Platform.Host.Devices;
 using Platform.Host.Snapshot;
 using Platform.Host.Write;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// DB 连接源：Auth/Devices 端点用（NpgsqlDataSource 线程安全，单例复用连接池）
+builder.Services.AddSingleton(sp =>
+    new Npgsql.NpgsqlDataSourceBuilder(
+        sp.GetRequiredService<IConfiguration>().GetConnectionString("Platform")).Build());
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -34,6 +41,8 @@ if (app.Environment.IsDevelopment())
 app.MapHealthEndpoints();
 app.MapSnapshotEndpoints();
 app.MapWriteEndpoints();
+app.MapAuthEndpoints();
+app.MapDeviceEndpoints();
 app.MapControllers();
 
 app.Run();

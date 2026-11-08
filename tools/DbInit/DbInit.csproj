@@ -11,4 +11,9 @@
     <PackageReference Include="Npgsql" Version="8.0.5" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- seed users 模式用 Platform.Core.Security.PasswordHasher 生成 PBKDF2（与 Host 验证同一实现） -->
+    <ProjectReference Include="..\..\src\Platform.Core\Platform.Core.csproj" />
+  </ItemGroup>
+
 </Project>
