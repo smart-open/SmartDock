@@ -6,4 +6,16 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- 4.7 L2 进程外契约：proto 是主进程与 PluginHost 子进程共享的唯一真相源。
+       gRPC 代码生成依赖随契约走 Abstractions（两进程各自引用本工程即得同一套消息类型）。 -->
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.27.2" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.63.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.64.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Remote\driver.proto" GrpcServices="Both" />
+  </ItemGroup>
+
 </Project>

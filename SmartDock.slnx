@@ -17,5 +17,6 @@
     <Project Path="tools/DbInit/DbInit.csproj" />
     <Project Path="tools/ModbusSlaveSimulator/ModbusSlaveSimulator.csproj" />
     <Project Path="tools/Mc3eSimulator/Mc3eSimulator.csproj" />
+    <Project Path="tools/PluginHost/PluginHost.csproj" />
   </Folder>
 </Solution>

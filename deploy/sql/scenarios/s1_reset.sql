@@ -1,4 +1,6 @@
 -- S1 场景数据复位：清空台账并重建 SIM-001 种子（保证测试可重复）
+-- write_command 先清：M1-6 起它 FK 引用 device_point，台账重建会触发 FK 违规
+DELETE FROM write_command;
 DELETE FROM device_point;
 DELETE FROM device;
 

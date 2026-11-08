@@ -1,0 +1,54 @@
+// 进程外驱动 gRPC 契约（4.7 L2）。主进程是 client，PluginHost 子进程是 server。
+// M1-8 最小骨架：Ping（心跳）/Connect/Read；Write/Subscribe 随原生驱动插件补。
+syntax = "proto3";
+
+option csharp_namespace = "Platform.Abstractions.Remote";
+
+package driver;
+
+service RemoteDriver {
+  rpc Ping (PingRequest) returns (PingReply);
+  rpc Connect (ConnectRequest) returns (ConnectReply);
+  rpc Read (ReadRequest) returns (ReadReply);
+}
+
+message PingRequest {}
+
+message PingReply {
+  bool alive = 1;
+  string last_error = 2;
+}
+
+message ConnectRequest {
+  string endpoint_json = 1;   // 驱动 endpoint 原样透传（各协议自解释）
+}
+
+message ConnectReply {
+  bool success = 1;
+  string error = 2;
+}
+
+message ReadRequest {
+  repeated PointRefDto points = 1;
+}
+
+message PointRefDto {
+  int64 point_id = 1;
+  int64 device_id = 2;
+  string point_code = 3;
+  string address = 4;
+  string data_type = 5;
+}
+
+message ReadReply {
+  repeated ReadValueDto values = 1;
+}
+
+message ReadValueDto {
+  int64 point_id = 1;
+  int64 device_id = 2;
+  double value = 3;
+  int32 quality = 4;          // QualityCode 枚举值
+  int64 timestamp_unix_ms = 5;
+  string error = 6;           // Bad 时的原因
+}
