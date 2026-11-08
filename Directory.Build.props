@@ -1,0 +1,18 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- 2.4 技术选型：net8.0 为基线（存量工控机），新现场 net10；CI 双 TFN 构建属 M1 -->
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 11.11.9 质量门禁：平台内核工程告警即错误（M0 先对 src/Platform.* 生效） -->
+    <TreatWarningsAsErrors Condition="'$(MSBuildProjectName.StartsWith(`Platform.`))' == 'true'">true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <!-- 版本统一 -->
+    <Version>0.1.0-m0</Version>
+    <Company>SmartDock</Company>
+    <NeutralLanguage>zh-CN</NeutralLanguage>
+  </PropertyGroup>
+
+</Project>

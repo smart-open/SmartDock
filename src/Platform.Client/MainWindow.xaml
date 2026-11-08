@@ -1,0 +1,33 @@
+﻿<Window x:Class="Platform.Client.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Platform.Client"
+        mc:Ignorable="d"
+        Title="SmartDock M0 - 点位快照" Height="600" Width="960">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button x:Name="RefreshButton" Content="刷新快照" Click="OnRefreshClick" Padding="12,4" />
+            <TextBlock x:Name="StatusText" Margin="12,0,0,0" VerticalAlignment="Center" Text="就绪" />
+        </StackPanel>
+
+        <DataGrid Grid.Row="1" x:Name="SnapshotGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserAddRows="False" HeadersVisibility="Column">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="PointId" Binding="{Binding PointId}" Width="80" />
+                <DataGridTextColumn Header="值" Binding="{Binding ValueText}" Width="140" />
+                <DataGridTextColumn Header="质量" Binding="{Binding Quality}" Width="90" />
+                <DataGridTextColumn Header="时间(本地)" Binding="{Binding TimestampText}" Width="180" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <TextBlock Grid.Row="2" x:Name="ErrorText" Foreground="Red" Margin="0,8,0,0" TextWrapping="Wrap" />
+    </Grid>
+</Window>

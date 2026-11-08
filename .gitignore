@@ -7,3 +7,5 @@ artifacts/
 TestResults/
 *.snk
 appsettings.*.local.json
+publish/
+*.binlog

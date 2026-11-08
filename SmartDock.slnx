@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Platform.Abstractions/Platform.Abstractions.csproj" />
+    <Project Path="src/Platform.Client/Platform.Client.csproj" />
+    <Project Path="src/Platform.Core/Platform.Core.csproj" />
+    <Project Path="src/Platform.Data/Platform.Data.csproj" />
+    <Project Path="src/Platform.Host/Platform.Host.csproj" />
+  </Folder>
+  <Folder Name="/src/Plugins/">
+    <Project Path="src/Plugins/Driver.ModbusTcp/Driver.ModbusTcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Platform.Tests/Platform.Tests.csproj" />
+  </Folder>
+</Solution>
