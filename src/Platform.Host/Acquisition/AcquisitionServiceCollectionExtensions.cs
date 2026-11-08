@@ -48,28 +48,19 @@ public static class AcquisitionServiceCollectionExtensions
             return new DeviceRegistryStore(connectionString!);
         });
 
-        // 多设备采集调度器：驱动工厂按台账 driver_id 选择驱动插件（M1 先单协议）
+        // 驱动注册表：实现来自 DI（各插件提供 IDeviceDriverFactory，4.8.1），
+        // 核心与 Host 都不硬编码具体协议——新驱动 = 插件项目 + 注册一行。
+        services.AddSingleton<DriverRegistry>();
+
+        // 多设备采集调度器：按台账 driver_id 经注册表创建驱动
         services.AddSingleton<PollingScheduler>(serviceProvider =>
         {
             var pipeline = serviceProvider.GetRequiredService<AcquisitionPipeline>();
+            var driverRegistry = serviceProvider.GetRequiredService<DriverRegistry>();
             var logger = serviceProvider.GetRequiredService<ILogger<PollingScheduler>>();
 
-            IDeviceDriver CreateDriver(DeviceConfig device)
-            {
-                if (device.DriverId != Driver.ModbusTcp.ModbusTcpDriver.DriverId)
-                {
-                    throw new NotSupportedException($"unknown driver_id: {device.DriverId} (device {device.DeviceCode})");
-                }
-
-                var endpoint = System.Text.Json.JsonDocument.Parse(device.Endpoint).RootElement;
-                return new Driver.ModbusTcp.ModbusTcpDriver(
-                    endpoint.GetProperty("host").GetString()!,
-                    endpoint.GetProperty("port").GetInt32(),
-                    endpoint.TryGetProperty("unitId", out var unitId) ? unitId.GetByte() : (byte)1);
-            }
-
             return new PollingScheduler(
-                pipeline, CreateDriver, logger);
+                pipeline, driverRegistry.CreateDriver, logger);
         });
 
         services.AddHostedService<AcquisitionHostedService>();

@@ -1,0 +1,6 @@
+refactor: extract driver factory contract and registry (M1-4)
+
+- IDeviceDriverFactory contract in Abstractions; plugins self-register
+- DriverRegistry routes by device.driver_id, core stays plugin-agnostic
+- Host composition root: one AddDriverModbusTcp() line per plugin
+- driver registry unit tests (routing / unknown id / duplicate registration)
