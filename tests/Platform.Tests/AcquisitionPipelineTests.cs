@@ -21,7 +21,7 @@ public class AcquisitionPipelineTests
 
         for (var pointId = 1; pointId <= 5; pointId++)
         {
-            await pipeline.EnqueueAsync(new ReadValue(pointId, pointId * 1.5, QualityCode.Good, DateTime.UtcNow));
+            await pipeline.EnqueueAsync(new ReadValue(pointId, DeviceId: 1, pointId * 1.5, QualityCode.Good, DateTime.UtcNow));
         }
 
         await pipeline.StopAsync();
@@ -42,7 +42,7 @@ public class AcquisitionPipelineTests
             },
             new BatchOptions { FlushInterval = TimeSpan.FromSeconds(30) });   // 长窗口：只能靠排空拿到
 
-        await pipeline.EnqueueAsync(new ReadValue(1, 1.0, QualityCode.Good, DateTime.UtcNow));
+        await pipeline.EnqueueAsync(new ReadValue(1, DeviceId: 1, 1.0, QualityCode.Good, DateTime.UtcNow));
         await pipeline.StopAsync();   // 完成写入端 → 排空残余
 
         Assert.Equal(1, flushedCount);
@@ -61,7 +61,7 @@ public class AcquisitionPipelineTests
             },
             new BatchOptions { FlushInterval = TimeSpan.FromMilliseconds(20) });
 
-        await pipeline.EnqueueAsync(new ReadValue(1, null, QualityCode.Bad, DateTime.UtcNow));
+        await pipeline.EnqueueAsync(new ReadValue(1, DeviceId: 1, null, QualityCode.Bad, DateTime.UtcNow));
         await pipeline.StopAsync();
 
         Assert.Equal(1, flushed.Sum(b => b.Count));

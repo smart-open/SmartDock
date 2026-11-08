@@ -1,20 +1,20 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <!-- M0：net8.0-windows 例外于 Directory.Build.props 的统一 TFN -->
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <!-- M0：net8.0-windows 例外于 Directory.Build.props 的统一 TFN -->
-    <TargetFramework>net8.0-windows</TargetFramework>
-  </PropertyGroup>
-
   <ItemGroup>
     <PackageReference Include="System.Net.Http.Json" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

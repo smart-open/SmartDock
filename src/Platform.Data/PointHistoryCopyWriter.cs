@@ -19,7 +19,6 @@ public sealed class PointHistoryCopyWriter : IAsyncDisposable
     /// <summary>鎶婁竴鎵归噰闆嗗€?COPY 杩?point_history銆?/summary>
     public async Task WriteAsync(
         IReadOnlyList<ReadValue> batch,
-        long deviceId,
         CancellationToken cancellationToken = default)
     {
         if (batch.Count == 0)
@@ -49,7 +48,7 @@ public sealed class PointHistoryCopyWriter : IAsyncDisposable
             }
 
             await writer.WriteAsync((short)readValue.Quality, NpgsqlDbType.Smallint, cancellationToken);
-            await writer.WriteAsync(deviceId, NpgsqlDbType.Bigint, cancellationToken);
+            await writer.WriteAsync(readValue.DeviceId, NpgsqlDbType.Bigint, cancellationToken);
         }
 
         await writer.CompleteAsync(cancellationToken);

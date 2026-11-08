@@ -100,7 +100,7 @@ public sealed class ModbusTcpDriver : IDeviceDriver
         {
             var registers = await ReadHoldingRegistersAsync(parsed.Value.RegisterAddress, parsed.Value.WordCount, cancellationToken);
             var value = ParseFloat32(registers, swapWords: parsed.Value.SwapWords);
-            return new ReadValue(point.PointId, value, QualityCode.Good, DateTime.UtcNow);
+            return new ReadValue(point.PointId, point.DeviceId, value, QualityCode.Good, DateTime.UtcNow);
         }
         catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException)
         {
@@ -123,19 +123,29 @@ public sealed class ModbusTcpDriver : IDeviceDriver
             throw new IOException($"transaction id mismatch: {responseTransactionId} != {_transactionId}");
         }
 
-        var byteCount = header[6];
-        var payload = new byte[byteCount];
-        await ReadExactlyAsync(payload, cancellationToken);
+        // MBAP: [tid(2) proto(2) length(2) unit(1)]，PDU = FC(1) + byteCount(1) + data
+        var pduLength = (header[4] << 8) | header[5];   // 含 unitId
+        var pdu = new byte[pduLength - 1];               // 去掉 unitId
+        await ReadExactlyAsync(pdu, cancellationToken);
 
-        if (payload.Length > 0 && (payload[0] & 0x80) != 0)
+        var functionCode = pdu[0];
+
+        // Modbus 异常响应：FC | 0x80 + 1 字节异常码
+        if ((functionCode & 0x80) != 0)
         {
-            throw new IOException($"modbus exception code {payload[1]:X2}");
+            throw new IOException($"modbus exception code {pdu[1]:X2}");
+        }
+
+        var byteCount = pdu[1];
+        if (byteCount != count * 2)
+        {
+            throw new IOException($"unexpected byte count {byteCount}, expected {count * 2}");
         }
 
         var registers = new ushort[count];
         for (var i = 0; i < count; i++)
         {
-            registers[i] = (ushort)((payload[1 + i * 2] << 8) | payload[2 + i * 2]);
+            registers[i] = (ushort)((pdu[2 + i * 2] << 8) | pdu[3 + i * 2]);
         }
 
         return registers;
@@ -205,7 +215,7 @@ public sealed class ModbusTcpDriver : IDeviceDriver
     }
 
     private static ReadValue Bad(PointRef point, string reason) =>
-        new(point.PointId, null, QualityCode.Bad, DateTime.UtcNow);
+        new(point.PointId, point.DeviceId, null, QualityCode.Bad, DateTime.UtcNow);
 
     public async ValueTask DisposeAsync()
     {

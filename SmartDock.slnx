@@ -12,4 +12,8 @@
   <Folder Name="/tests/">
     <Project Path="tests/Platform.Tests/Platform.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/DbInit/DbInit.csproj" />
+    <Project Path="tools/ModbusSlaveSimulator/ModbusSlaveSimulator.csproj" />
+  </Folder>
 </Solution>

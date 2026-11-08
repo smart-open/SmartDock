@@ -9,3 +9,14 @@ TestResults/
 appsettings.*.local.json
 publish/
 *.binlog
+
+# temp/intermediate files (agent workflow: clean after each task)
+*.log
+tmp_*
+*_out.txt
+*.tmp
+commit-msg.txt
+
+# keep dirs
+!tests/.gitkeep
+!scripts/.gitkeep
