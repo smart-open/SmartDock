@@ -20,7 +20,9 @@ public sealed class PollingScheduler : IAsyncDisposable
     /// <summary>最新快照（键 = PointId）；多设备循环并发写，读侧锁保护。</summary>
     private readonly Dictionary<long, ReadValue> _snapshot = new();
     private readonly object _snapshotLock = new();
-    private readonly Dictionary<long, IDeviceDriver> _activeDrivers = new();
+    // 并发字典：每台设备一个循环并发注册/注销驱动实例；普通 Dictionary 并发写会损坏内部桶
+    // （M1-10 压测 20 台时暴露 IndexOutOfRangeException，10 台以下属侥幸未触发）
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, IDeviceDriver> _activeDrivers = new();
 
     public PollingScheduler(
         AcquisitionPipeline pipeline,
@@ -142,7 +144,7 @@ public sealed class PollingScheduler : IAsyncDisposable
             finally
             {
                 // 驱动随循环退出注销（WriteGuard 之后再来写会得到 FAILED：设备已离线）
-                _activeDrivers.Remove(entry.Device.DeviceId);
+                _activeDrivers.TryRemove(entry.Device.DeviceId, out _);
                 // 驱动实例随设备循环结束释放（5.12：连接管理归平台）
                 if (driver is not null)
                 {

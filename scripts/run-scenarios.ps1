@@ -166,7 +166,8 @@ function Run-S4 {
         $summaryUp = Get-SnapshotSummary
     } while ($summaryUp.good -lt 10 -and (Get-Date) -lt $deadline)
 
-    Assert-Scenario "S4.2 重连自愈恢复 Good" ($summaryUp.good -eq 10) "good=$($summaryUp.good)"
+    # 恢复判据用 >=：SIM-001(10点)+SIM-002(20点) 重连时序不定，可能首次检查时两台都已恢复（good=30）
+    Assert-Scenario "S4.2 重连自愈恢复 Good" ($summaryUp.good -ge 10) "good=$($summaryUp.good)"
 
     $recovered = Invoke-ScalarFile "deploy/sql/scenarios/q_good_recent.sql"
     Assert-Scenario "S4.3 恢复后落库续写" ($recovered -gt 0) "good rows in 5s: $recovered"
