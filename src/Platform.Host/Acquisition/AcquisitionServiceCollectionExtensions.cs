@@ -56,6 +56,16 @@ public static class AcquisitionServiceCollectionExtensions
             return new WriteCommandStore(connectionString!);
         });
 
+        // 分区运维（7.4）：月分区提前建 + 过期分区按保留期删除
+        services.AddOptions<PartitionMaintenanceConfig>().BindConfiguration(PartitionMaintenanceConfig.SectionName);
+        services.AddSingleton<PartitionMaintainer>(serviceProvider =>
+        {
+            var connectionString = serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("Platform");
+            var logger = serviceProvider.GetRequiredService<ILogger<PartitionMaintainer>>();
+            return new PartitionMaintainer(connectionString!, logger);
+        });
+        services.AddHostedService<PartitionMaintenanceService>();
+
         // WriteGuard 四道闸（5.6）：权限留痕在 API 层，互锁注入，先落库，回读比对
         services.AddSingleton<WriteGuard>(serviceProvider =>
         {
