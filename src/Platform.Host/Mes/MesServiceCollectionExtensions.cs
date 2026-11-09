@@ -2,6 +2,7 @@
 // M2-1 只接 Mock 适配器（本地回环"虚拟 MES"，供场景测试断言）；真实适配器随 M2-3。
 
 using Platform.Abstractions;
+using Microsoft.Extensions.Options;
 using Platform.Core.Mes;
 using Platform.Data;
 
@@ -22,9 +23,23 @@ public static class MesServiceCollectionExtensions
         services.AddSingleton<WorkOrderStore>(serviceProvider =>
             new WorkOrderStore(serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("Platform")!));
 
+        // 对账与兜底（M2-3）：Sending 卡死回置 + 每日 02:00 对账
+        services.AddSingleton<MesReconcileStore>(serviceProvider =>
+            new MesReconcileStore(serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("Platform")!));
+        services.AddHostedService<ReconcileScheduler>();
+
         services.AddSingleton<IMesAdapterProvider, MesAdapterProvider>();
         services.AddOptions<MockMesOptions>().BindConfiguration(MockMesOptions.SectionName);
         services.AddSingleton<IMesAdapter, MockMesAdapter>();
+
+        // REST 适配器（M2-3，6.10 契约口径）：baseUrl 配好即投递；未配 = target 不可用退避
+        services.AddOptions<Platform.Core.Mes.RestMesOptions>().BindConfiguration(Platform.Core.Mes.RestMesOptions.SectionName);
+        services.AddHttpClient("mes.rest");
+        services.AddSingleton<IMesAdapter>(serviceProvider =>
+            new Platform.Core.Mes.RestMesAdapter(
+                serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient("mes.rest"),
+                serviceProvider.GetRequiredService<IOptionsMonitor<Platform.Core.Mes.RestMesOptions>>()));
+
         services.AddHostedService<OutboxWorker>();
         return services;
     }

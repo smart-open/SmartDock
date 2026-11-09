@@ -19,5 +19,6 @@
     <Project Path="tools/Mc3eSimulator/Mc3eSimulator.csproj" />
     <Project Path="tools/PluginHost/PluginHost.csproj" />
     <Project Path="tools/LoadSimulator/LoadSimulator.csproj" />
+    <Project Path="tools/MesStubServer/MesStubServer.csproj" />
   </Folder>
 </Solution>
