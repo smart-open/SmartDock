@@ -9,7 +9,9 @@ public sealed record WriteGuardResult(
     bool Accepted,
     string? RejectReason,
     bool Verified,
-    double? ReadBackValue);
+    double? ReadBackValue,
+    /// <summary>执行阶段失败原因（设备不可达/写失败/回读不符）；null = 执行未报错。调用方据此区分 200/5xx。</summary>
+    string? Error = null);
 
 /// <summary>闸 2（互锁）回调：返回 null = 放行；返回字符串 = 拒绝原因。由上层按业务实现。</summary>
 public delegate string? InterlockCheck(long deviceId, long pointId, double value);
@@ -148,6 +150,9 @@ public sealed class WriteGuard
     {
         await _finishAsync(commandId, error, false, null);
         _logger.LogWarning("write command {CommandId} failed: {Error}", commandId, error);
-        return new WriteGuardResult(commandId, Accepted: true, RejectReason: null, Verified: false, ReadBackValue: null);
+        // Accepted=true 仅表示「通过了闸 1-3」，执行失败必须把 error 带出去，
+        // 否则 API 层会把设备写失败当成 200 成功返回（客户端误以为写成功）
+        return new WriteGuardResult(commandId, Accepted: true, RejectReason: null, Verified: false,
+            ReadBackValue: null, Error: error);
     }
 }

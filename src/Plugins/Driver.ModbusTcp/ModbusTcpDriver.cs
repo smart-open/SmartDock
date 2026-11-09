@@ -198,6 +198,9 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
             return new WriteResult(false, "not connected");
         }
 
+        // 请求-应答半双工：必须与 ReadAsync 走同一把锁，否则 WriteGuard 写入与周期采集
+        // 并发时同一 TCP 流上两个报文的请求/应答字节交错（transactionId 竞争导致错乱）
+        await _gate.WaitAsync(cancellationToken);
         try
         {
             var raw = BitConverter.SingleToUInt32Bits((float)value);
@@ -251,6 +254,10 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
         catch (OperationCanceledException)
         {
             throw;
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 

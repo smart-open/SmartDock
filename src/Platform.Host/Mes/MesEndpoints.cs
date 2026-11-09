@@ -13,14 +13,48 @@ public static class MesEndpoints
     {
         var group = app.MapGroup("/api/mes");
 
-        // 报工上传（6.2 接口 3）：workOrderNo + stepNo 必填，payload 原文透传入 Outbox
-        group.MapPost("/report", async (ReportRequest request, MesOutboxStore store) =>
+        // 报工上传（6.2 接口 3）：workOrderNo + stepNo 必填，payload 原文透传入 Outbox。
+        // seq 不能用 MesIdempotencyKeyBuilder 的进程内存计数器——重启后从 1 重计，
+        // 会与历史键撞车被唯一索引误判重（新报工静默丢失）；改为 DB 前缀计数（与
+        // WorkOrderStore.ChangeStatusAsync 同口径），order_no 含 %/_ 时须转义。
+        group.MapPost("/report", async (ReportRequest request, Npgsql.NpgsqlDataSource dataSource) =>
         {
-            var idempotencyKey = MesIdempotencyKeyBuilder.ProductionReport(request.WorkOrderNo, request.StepNo);
-            var payloadJson = JsonSerializer.Serialize(request);
-            var inserted = await store.TryEnqueueAsync("production.report", request.Target ?? "mes.mock",
-                idempotencyKey, payloadJson);
-            return Results.Ok(new { idempotencyKey, inserted, duplicate = !inserted });
+            await using var connection = await dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            try
+            {
+                await using var seqCommand = new Npgsql.NpgsqlCommand("""
+                    SELECT COUNT(*) FROM mes_outbox
+                    WHERE biz_type = 'production.report' AND idempotency_key LIKE @like ESCAPE '\'
+                    """, connection, transaction);
+                var prefix = $"production.report:{EscapeLike(request.WorkOrderNo)}:{request.StepNo}";
+                seqCommand.Parameters.AddWithValue("like", prefix + ":%");
+                var seq = (int)(long)(await seqCommand.ExecuteScalarAsync())! + 1;
+                var idempotencyKey = $"{prefix}:{seq}";
+
+                var payloadJson = JsonSerializer.Serialize(request);
+                await using var insertCommand = new Npgsql.NpgsqlCommand("""
+                    INSERT INTO mes_outbox (biz_type, target, idempotency_key, payload)
+                    VALUES ('production.report', @target, @idem, @payload::jsonb)
+                    """, connection, transaction);
+                insertCommand.Parameters.AddWithValue("target", request.Target ?? "mes.mock");
+                insertCommand.Parameters.AddWithValue("idem", idempotencyKey);
+                insertCommand.Parameters.AddWithValue("payload", NpgsqlTypes.NpgsqlDbType.Jsonb, payloadJson);
+                await insertCommand.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+                return Results.Ok(new { idempotencyKey, inserted = true, duplicate = false });
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+            {
+                // 唯一索引撞键 = 同序号报文已存在：对账兜底路径收到的是重放，返回已入账
+                await transaction.RollbackAsync(CancellationToken.None);
+                return Results.Ok(new { idempotencyKey = "", inserted = false, duplicate = true });
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                throw;
+            }
         });
 
         // 设备状态（6.2 接口 7）：deviceCode + state + 5min 时间窗
@@ -80,6 +114,12 @@ public static class MesEndpoints
             await store.RequeueAsync(id);
             return Results.Ok(new { id, requeued = true });
         });
+
+        /// <summary>LIKE 模式转义（\ % _），与 WorkOrderStore.EscapeLike 同口径。</summary>
+        static string EscapeLike(string value) => value
+            .Replace(@"\", @"\\", StringComparison.Ordinal)
+            .Replace("%", @"\%", StringComparison.Ordinal)
+            .Replace("_", @"\_", StringComparison.Ordinal);
     }
 }
 

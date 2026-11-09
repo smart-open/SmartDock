@@ -24,7 +24,15 @@ public static class WriteEndpoints
             }
 
             var result = await writeGuard.ExecuteAsync(operatorName, request.PointId, request.Value);
-            return result.Accepted
+            return result.Error is not null
+                ? // 执行失败（设备不可达/写失败）：write_command 已留 FAILED 痕，但绝不能回 200——
+                  // 客户端必须能区分「写成功但回读不符」与「设备根本没写进去」
+                  Results.Json(new
+                {
+                    commandId = result.CommandId,
+                    error = result.Error,
+                }, statusCode: 502)
+                : result.Accepted
                 ? Results.Ok(new
                 {
                     commandId = result.CommandId,
