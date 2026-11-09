@@ -9,6 +9,7 @@ using Platform.Host.Snapshot;
 using Platform.Host.Write;
 using Platform.Host.Mes;
 using Platform.Host.WorkOrders;
+using Platform.Host.Reports;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +33,8 @@ builder.Services.AddDriverMc3e();
 // 采集链路装配（Host 专属扩展方法，组合根只留"装什么"不留"怎么装"）
 builder.Services.AddAcquisition();
 builder.Services.AddMesOutbox();
+// 报表存储（8.1/8.2）：定义读取 + 编译执行 + 审计留痕，复用全局连接池
+builder.Services.AddSingleton<Platform.Core.Reports.ReportStore>();
 
 var app = builder.Build();
 
@@ -48,6 +51,7 @@ app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapMesEndpoints();
 app.MapWorkOrderEndpoints();
+app.MapReportEndpoints();
 app.MapControllers();
 
 app.Run();
