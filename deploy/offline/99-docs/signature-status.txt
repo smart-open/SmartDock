@@ -1,0 +1,12 @@
+SmartDock 1.0.0 签名状态
+========================
+STATUS: UNSIGNED
+
+OV/EV 代码签名证书为采购项（12.10.3 第 9 条，申请周期 3~15 个工作日）。
+证书就绪后：
+  powershell scripts/publish.ps1 -SignCertSubject "<证书 CN>"
+流水线将执行 signtool sign（RFC3161 时间戳）+ verify 证书链校验（签名失败=构建失败），
+本文件更新为 SIGNED 并记录证书指纹与有效期（发版纪律：续期提前 60 天）。
+
+UNSIGNED 期间的现场口径：甲方 EDR 按文件路径白名单放行（《干净机实装验收单》第二节），
+验收 #29 后半（双击无阻断）挂起至签名版交付。

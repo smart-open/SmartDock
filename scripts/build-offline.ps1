@@ -1,4 +1,4 @@
-﻿# 12.3 离线包装配：把发布产物 + SQL 迁移 + 安装脚本 + 备份脚本 + SBOM/文档
+﻿# 12.3 离线包装配：把发布产物 + 客户端 + 子进程宿主 + DbInit + SQL 迁移 + 安装脚本 + 备份脚本 + SBOM/文档
 # 装配成 U 盘可摆渡的目录结构（12.3 离线包结构逐项对应）。
 # 用法：powershell scripts/build-offline.ps1 [-Version 1.0.0]
 
@@ -16,6 +16,26 @@ $releaseDir = Join-Path $offlineRoot "04-platform-releases/$Version"
 if (-not (Test-Path (Join-Path $releaseDir "Platform.Host.exe"))) {
     throw "release not found: $releaseDir — run scripts/publish.ps1 first"
 }
+
+# 04b：客户端（M3-1 五页版）自包含发布进包（05-client，12.3 结构 ⑤ 的 XCopy 形态；
+# Inno Setup 安装器待证书采购后按 12.11.1 签名替换，目录部署形态现场无网同样可用）
+$clientDir = Join-Path $offlineRoot "05-client"
+Write-Host "=== publishing Platform.Client (self-contained win-x64) ==="
+dotnet publish src/Platform.Client -c Release -r win-x64 --self-contained true `
+    -o $clientDir
+if ($LASTEXITCODE -ne 0) { throw "client publish failed" }
+
+# 04b：子进程宿主（验收 #7/#29 点名 PluginHost.exe 随包；EDR 白名单对象之一）
+$pluginHostDir = Join-Path $releaseDir "pluginhost"
+New-Item -ItemType Directory -Force -Path $pluginHostDir | Out-Null
+dotnet publish tools/PluginHost -c Release -r win-x64 --self-contained true -o $pluginHostDir
+if ($LASTEXITCODE -ne 0) { throw "PluginHost publish failed" }
+
+# 08-tools：DbInit 独立可执行进包（03-install-services.bat 步骤 3 依赖）
+$dbInitDir = Join-Path $offlineRoot "08-tools/DbInit"
+New-Item -ItemType Directory -Force -Path $dbInitDir | Out-Null
+dotnet publish tools/DbInit -c Release -r win-x64 --self-contained true -o $dbInitDir
+if ($LASTEXITCODE -ne 0) { throw "DbInit publish failed" }
 
 # 06-db：全部迁移脚本（按文件名序执行，DbInit 口径一致）
 $dbDir = Join-Path $offlineRoot "06-db"
@@ -68,3 +88,14 @@ SmartDock $Version 离线安装包（12.3 结构）
 
 Write-Host "offline package ready: $offlineRoot"
 Get-ChildItem $offlineRoot | ForEach-Object { Write-Host "  $($_.Name)" }
+
+# 附录 B：离线包哈希清单（现场收货核对 + EDR/安全部门备案；文本产物正常跟踪，
+# 二进制目录 04-platform-releases/05-client 已 gitignore 不入库）
+$manifestPath = Join-Path $offlineRoot "manifest.sha256"
+Get-ChildItem -Path $offlineRoot -Recurse -File |
+    Where-Object { $_.FullName -notmatch '04-platform-releases|05-client' -or $_.Extension -in '.exe','.dll' } |
+    ForEach-Object {
+        $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+        "$hash  $($_.FullName.Substring($offlineRoot.Length + 1))"
+    } | Set-Content $manifestPath -Encoding UTF8
+Write-Host "manifest: $manifestPath ($((Get-Content $manifestPath).Count) entries)"
