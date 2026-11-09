@@ -35,6 +35,7 @@ public static class AuthEndpoints
             command.Parameters.AddWithValue("user_code", request.UserCode);
 
             string? storedHash = null;
+            long userId = 0;
             string userName = "";
             var enabled = false;
             var locked = false;
@@ -43,6 +44,7 @@ public static class AuthEndpoints
             {
                 if (await reader.ReadAsync())
                 {
+                    userId = reader.GetInt64(0);
                     storedHash = reader.GetString(2);
                     enabled = reader.GetInt16(3) == 1;
                     locked = reader.GetBoolean(4);
@@ -76,7 +78,7 @@ public static class AuthEndpoints
                 }
             }
 
-            return Results.Ok(new LoginResult(userName, roles, permissions));
+            return Results.Ok(new LoginResult(userId, userName, roles, permissions));
         });
 
         return endpoints;
@@ -85,4 +87,4 @@ public static class AuthEndpoints
 
 public sealed record LoginRequest(string UserCode, string Password);
 
-public sealed record LoginResult(string UserName, IReadOnlyList<string> Roles, IReadOnlyList<string> Permissions);
+public sealed record LoginResult(long UserId, string UserName, IReadOnlyList<string> Roles, IReadOnlyList<string> Permissions);

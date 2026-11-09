@@ -14,6 +14,8 @@ using Platform.Host.Features;
 using Platform.Host.License;
 using Platform.Core.License;
 using Platform.Core.Features;
+using Platform.Host.Alarms;
+using Platform.Core.Alarms;
 
 // 单文件发布 + SCM 拉起时系统默认 CWD 是 C:\Windows\System32，
 // appsettings/插件目录解析会失败（S19 实测：CWD 不对 → 连接串读为 null）。
@@ -47,6 +49,9 @@ builder.Services.AddDriverMc3e();
 // 采集链路装配（Host 专属扩展方法，组合根只留"装什么"不留"怎么装"）
 builder.Services.AddAcquisition();
 builder.Services.AddMesOutbox();
+// 报警（C1/C3 最小实现，7.3 alarm 表）：连接态派生 + 确认留痕
+builder.Services.AddSingleton<AlarmStore>(sp =>
+    new AlarmStore(sp.GetRequiredService<IConfiguration>().GetConnectionString("Platform")!));
 // 报表存储（8.1/8.2）：定义读取 + 编译执行 + 审计留痕，复用全局连接池
 builder.Services.AddSingleton<Platform.Core.Reports.ReportStore>();
 // 功能开关（3.7）：定义缓存 30s + feature_version 失效；License/插件就绪用默认实现（M3-5 替换）
@@ -93,6 +98,7 @@ app.MapWorkOrderEndpoints();
 app.MapReportEndpoints();
 app.MapFeatureEndpoints();
 app.MapLicenseEndpoints();
+app.MapAlarmEndpoints();
 app.MapControllers();
 
 app.Run();

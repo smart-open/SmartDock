@@ -9,13 +9,20 @@
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <!-- 左侧导航：M1 两页（设备/点位）；报警/报表随 M3 -->
+        <!-- 左侧导航：M3-1 五页（设备/点位/报警/报表/演示崩溃页） -->
         <StackPanel Grid.Column="0" Background="#F0F0F0">
             <TextBlock x:Name="SessionText" Margin="12,12,12,20" TextWrapping="Wrap" FontWeight="Bold" />
             <Button x:Name="NavDevicesButton" Content="设备" Height="36" Margin="8,4"
                     HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavDevicesClick" />
             <Button x:Name="NavPointsButton" Content="点位" Height="36" Margin="8,4"
                     HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavPointsClick" />
+            <Button x:Name="NavAlarmsButton" Content="报警" Height="36" Margin="8,4"
+                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavAlarmsClick" />
+            <Button x:Name="NavReportsButton" Content="报表" Height="36" Margin="8,4"
+                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavReportsClick" />
+            <Separator Margin="8,12" />
+            <Button x:Name="NavCrashDemoButton" Content="插件页（隔离演示）" Height="36" Margin="8,4"
+                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavCrashDemoClick" />
         </StackPanel>
 
         <!-- 右侧内容区：两页共享一个 ContentControl，按导航切换 -->

@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Platform.Client.Services;
 
 /// <summary>认证 API 客户端（登录态仅存客户端内存；服务端 WriteGuard 才是写操作安全边界）。</summary>
-public sealed record LoginOutcome(string UserName, IReadOnlyList<string> Roles, IReadOnlyList<string> Permissions);
+public sealed record LoginOutcome(long UserId, string UserName, IReadOnlyList<string> Roles, IReadOnlyList<string> Permissions);
 
 public sealed class AuthApiClient(string baseAddress)
 {
@@ -30,6 +30,7 @@ public sealed class AuthApiClient(string baseAddress)
 
         var doc = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         return new LoginOutcome(
+            doc.GetProperty("userId").GetInt64(),
             doc.GetProperty("userName").GetString() ?? userCode,
             doc.GetProperty("roles").EnumerateArray().Select(v => v.GetString() ?? "").ToArray(),
             doc.GetProperty("permissions").EnumerateArray().Select(v => v.GetString() ?? "").ToArray());

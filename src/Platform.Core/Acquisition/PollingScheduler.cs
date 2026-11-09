@@ -23,6 +23,13 @@ public sealed class PollingScheduler : IAsyncDisposable
     // 并发字典：每台设备一个循环并发注册/注销驱动实例；普通 Dictionary 并发写会损坏内部桶
     // （M1-10 压测 20 台时暴露 IndexOutOfRangeException，10 台以下属侥幸未触发）
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, IDeviceDriver> _activeDrivers = new();
+    // 连接态记忆：仅在变化沿触发回调（避免每轮 poll 重复报警/清警）。
+    // 缺省（无记录）= 未知：未知→离线 也是变化（设备从未上线也要报警，不能漏）。
+    private readonly Dictionary<long, bool> _knownConnectionStates = [];
+    private readonly object _connectionStateLock = new();
+
+    /// <summary>设备连接态变化回调（M3-1 报警源）：connected=false 报离线，true 报恢复。Core 不知报警存在，Host 决定落库。</summary>
+    public event Action<long, string, bool>? DeviceConnectionChanged;
 
     public PollingScheduler(
         AcquisitionPipeline pipeline,
@@ -105,6 +112,23 @@ public sealed class PollingScheduler : IAsyncDisposable
         }
     }
 
+    /// <summary>变化沿检测：状态翻转才回调（raise/clear 各一次），稳态零开销。</summary>
+    private void NotifyConnectionChanged(long deviceId, string deviceCode, bool connected)
+    {
+        bool changed;
+        lock (_connectionStateLock)
+        {
+            changed = !_knownConnectionStates.TryGetValue(deviceId, out var known) || known != connected;
+            _knownConnectionStates[deviceId] = connected;
+        }
+        if (changed)
+        {
+            DeviceConnectionChanged?.Invoke(deviceId, deviceCode, connected);
+            _logger.LogInformation("device {Device} connection changed: {State}", deviceCode,
+                connected ? "ONLINE" : "OFFLINE");
+        }
+    }
+
     /// <summary>单设备采集循环：连接退避重试（5.8）→ 周期读 → 快照 + 投递。</summary>
     private async Task PollDeviceLoopAsync(DeviceEntry entry, CancellationToken cancellationToken)
     {
@@ -171,6 +195,8 @@ public sealed class PollingScheduler : IAsyncDisposable
                 if (!connect.Success)
                 {
                     connectRetryCount++;
+                    // 从未上线（首次连接）或重连持续失败也要报离线——报警源不能漏「一直连不上」的设备
+                    NotifyConnectionChanged(entry.Device.DeviceId, entry.Device.DeviceCode, connected: false);
                     // 指数退避：1s→2s→4s→…→30s 封顶
                     var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, connectRetryCount), 30));
                     _logger.LogWarning("device {Device}: driver connect failed (attempt {Retry}): {Error}, retry in {Backoff}",
@@ -181,6 +207,7 @@ public sealed class PollingScheduler : IAsyncDisposable
 
                 connected = true;
                 connectRetryCount = 0;
+                NotifyConnectionChanged(entry.Device.DeviceId, entry.Device.DeviceCode, connected: true);
                 _logger.LogInformation("device {Device} polling started: {PointCount} points, period {Period}",
                     entry.Device.DeviceCode, entry.Points.Count, period);
             }
@@ -206,6 +233,7 @@ public sealed class PollingScheduler : IAsyncDisposable
                 if (values.Count > 0 && values.All(v => v.Quality == QualityCode.Bad))
                 {
                     connected = false;
+                    NotifyConnectionChanged(entry.Device.DeviceId, entry.Device.DeviceCode, connected: false);
                     _logger.LogWarning("device {Device}: all points Bad, marking disconnected for reconnect",
                         entry.Device.DeviceCode);
                 }
