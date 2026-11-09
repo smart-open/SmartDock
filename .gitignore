@@ -7,6 +7,11 @@ artifacts/
 TestResults/
 *.snk
 appsettings.*.local.json
+# 13.6.5 凭据纪律：签发私钥只在签发方保管，绝不入库；开发 lic 属本地环境产物
+dev-license-private.xml
+*-license-private.xml
+license.lic
+dev-license-public.xml
 publish/
 *.binlog
 # M3-4 离线包构建产物：发布二进制（自包含 ~107MB）按需由 scripts/publish.ps1 重新生成，
