@@ -1,0 +1,179 @@
+﻿{
+    "bomFormat":  "CycloneDX",
+    "specVersion":  "1.5",
+    "serialNumber":  "urn:uuid:7ebefda8-0e94-4315-86f8-6aeced5a7bde",
+    "version":  1,
+    "metadata":  {
+                     "timestamp":  "2026-11-09T04:11:42.4538083Z",
+                     "component":  {
+                                       "type":  "application",
+                                       "name":  "SmartDock",
+                                       "version":  "1.0.0"
+                                   }
+                 },
+    "components":  [
+                       {
+                           "type":  "application",
+                           "name":  "Platform.Abstractions",
+                           "version":  "1.0.0",
+                           "purl":  "pkg:generic/SmartDock/Platform.Abstractions@1.0.0"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Google.Protobuf",
+                           "version":  "3.27.2",
+                           "purl":  "pkg:nuget/Google.Protobuf@3.27.2"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Grpc.Net.Client",
+                           "version":  "2.63.0",
+                           "purl":  "pkg:nuget/Grpc.Net.Client@2.63.0"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Grpc.Tools",
+                           "version":  "2.64.0",
+                           "purl":  "pkg:nuget/Grpc.Tools@2.64.0"
+                       },
+                       {
+                           "type":  "application",
+                           "name":  "Platform.Client",
+                           "version":  "1.0.0",
+                           "purl":  "pkg:generic/SmartDock/Platform.Client@1.0.0"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "System.Net.Http.Json",
+                           "version":  "8.0.0",
+                           "purl":  "pkg:nuget/System.Net.Http.Json@8.0.0"
+                       },
+                       {
+                           "type":  "application",
+                           "name":  "Platform.Core",
+                           "version":  "1.0.0",
+                           "purl":  "pkg:generic/SmartDock/Platform.Core@1.0.0"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "ClosedXML",
+                           "version":  "0.104.2",
+                           "purl":  "pkg:nuget/ClosedXML@0.104.2",
+                           "licenses":  [
+                                            {
+                                                "license":  {
+                                                                "id":  "MIT"
+                                                            }
+                                            }
+                                        ]
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Microsoft.Extensions.Hosting.Abstractions",
+                           "version":  "8.0.0",
+                           "purl":  "pkg:nuget/Microsoft.Extensions.Hosting.Abstractions@8.0.0",
+                           "licenses":  [
+                                            {
+                                                "license":  {
+                                                                "id":  "MIT"
+                                                            }
+                                            }
+                                        ]
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Microsoft.Extensions.Logging.Abstractions",
+                           "version":  "8.0.1",
+                           "purl":  "pkg:nuget/Microsoft.Extensions.Logging.Abstractions@8.0.1",
+                           "licenses":  [
+                                            {
+                                                "license":  {
+                                                                "id":  "MIT"
+                                                            }
+                                            }
+                                        ]
+                       },
+                       {
+                           "type":  "application",
+                           "name":  "Platform.Data",
+                           "version":  "1.0.0",
+                           "purl":  "pkg:generic/SmartDock/Platform.Data@1.0.0"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Npgsql",
+                           "version":  "8.0.5",
+                           "purl":  "pkg:nuget/Npgsql@8.0.5",
+                           "licenses":  [
+                                            {
+                                                "license":  {
+                                                                "id":  "PostgreSQL"
+                                                            }
+                                            }
+                                        ]
+                       },
+                       {
+                           "type":  "application",
+                           "name":  "Platform.Host",
+                           "version":  "1.0.0",
+                           "purl":  "pkg:generic/SmartDock/Platform.Host@1.0.0"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Swashbuckle.AspNetCore",
+                           "version":  "6.6.2",
+                           "purl":  "pkg:nuget/Swashbuckle.AspNetCore@6.6.2",
+                           "licenses":  [
+                                            {
+                                                "license":  {
+                                                                "id":  "MIT"
+                                                            }
+                                            }
+                                        ]
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Microsoft.Extensions.Options.ConfigurationExtensions",
+                           "version":  "8.0.0",
+                           "purl":  "pkg:nuget/Microsoft.Extensions.Options.ConfigurationExtensions@8.0.0",
+                           "licenses":  [
+                                            {
+                                                "license":  {
+                                                                "id":  "MIT"
+                                                            }
+                                            }
+                                        ]
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Microsoft.Extensions.Hosting.WindowsServices",
+                           "version":  "8.0.1",
+                           "purl":  "pkg:nuget/Microsoft.Extensions.Hosting.WindowsServices@8.0.1",
+                           "licenses":  [
+                                            {
+                                                "license":  {
+                                                                "id":  "MIT"
+                                                            }
+                                            }
+                                        ]
+                       },
+                       {
+                           "type":  "application",
+                           "name":  "Driver.Mc3e",
+                           "version":  "1.0.0",
+                           "purl":  "pkg:generic/SmartDock/Driver.Mc3e@1.0.0"
+                       },
+                       {
+                           "type":  "library",
+                           "name":  "Microsoft.Extensions.DependencyInjection.Abstractions",
+                           "version":  "8.0.2",
+                           "purl":  "pkg:nuget/Microsoft.Extensions.DependencyInjection.Abstractions@8.0.2"
+                       },
+                       {
+                           "type":  "application",
+                           "name":  "Driver.ModbusTcp",
+                           "version":  "1.0.0",
+                           "purl":  "pkg:generic/SmartDock/Driver.ModbusTcp@1.0.0"
+                       }
+                   ]
+}

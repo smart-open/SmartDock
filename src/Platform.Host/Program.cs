@@ -12,7 +12,17 @@ using Platform.Host.WorkOrders;
 using Platform.Host.Reports;
 using Platform.Host.Features;
 
+// 单文件发布 + SCM 拉起时系统默认 CWD 是 C:\Windows\System32，
+// appsettings/插件目录解析会失败（S19 实测：CWD 不对 → 连接串读为 null）。
+// 显式切到 exe 所在目录，控制台/服务两种形态统一。
+// 必须在 CreateBuilder 之前：ContentRoot 在 builder 构造时就按当前 CWD 固化。
+Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
 var builder = WebApplication.CreateBuilder(args);
+
+// 12.2 Windows 服务直装：SCM 拉起时以服务身份运行（工作目录切到 exe 所在目录，
+// 否则 appsettings/插件目录解析会落到 C:\Windows\System32）；控制台运行时无影响。
+builder.Host.UseWindowsService(options => options.ServiceName = "Platform.Host");
 
 // DB 连接源：Auth/Devices 端点用（NpgsqlDataSource 线程安全，单例复用连接池）
 builder.Services.AddSingleton(sp =>

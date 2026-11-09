@@ -9,6 +9,9 @@ TestResults/
 appsettings.*.local.json
 publish/
 *.binlog
+# M3-4 离线包构建产物：发布二进制（自包含 ~107MB）按需由 scripts/publish.ps1 重新生成，
+# 不入库；脚本/SQL/SBOM 等文本产物正常跟踪
+deploy/offline/04-platform-releases/
 
 # temp/intermediate files (agent workflow: clean after each task)
 *.log
