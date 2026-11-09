@@ -21,6 +21,8 @@ while (true)
     var context = await listener.GetContextAsync();
     var path = context.Request.Url?.AbsolutePath ?? "/";
     var idem = context.Request.Headers["X-Idempotency-Key"] ?? "(none)";
+    // 请求留痕（断网演练核对 0 重复入账）：每条请求一行，含时间戳与幂等键
+    Console.WriteLine($"{DateTime.Now:HH:mm:ss} {path} key={idem}");
     string respond;
     lock (receivedLock)
     {
