@@ -1,0 +1,139 @@
+// 02 §3.7.1 存储：定义全量读（缓存回源）、范围解析（窄覆盖宽）、变更落库 + 版本号推进。
+// NpgsqlDataSource 由 Host 组合根注入（与 ReportStore 同口径，复用全局连接池）。
+
+using Npgsql;
+using Platform.Abstractions.Features;
+
+namespace Platform.Core.Features;
+
+public interface IFeatureStore
+{
+    IReadOnlyDictionary<string, FeatureDefinition> GetAllDefinitions();
+
+    /// <summary>范围解析：line &gt; workshop &gt; factory &gt; global（3.7.1），无覆盖返回 null（用 default）。</summary>
+    bool? Resolve(string key, FeatureScope? scope);
+
+    long GetVersion();
+
+    /// <summary>写入范围覆盖（Planner 六步通过后调用）并推进版本号。</summary>
+    Task SaveScopeOverrideAsync(string key, string scopeType, string scopeId, bool enabled,
+        string reason, string? ticketNo, long updatedBy, CancellationToken cancellationToken = default);
+
+    /// <summary>查互斥/依赖键的当前生效值（Planner 步骤 2/3 用）。</summary>
+    Task<IReadOnlyDictionary<string, bool>> ResolveKeysAsync(
+        IEnumerable<string> keys, CancellationToken cancellationToken = default);
+}
+
+public sealed class FeatureStore : IFeatureStore
+{
+    private readonly NpgsqlDataSource _dataSource;
+
+    public FeatureStore(NpgsqlDataSource dataSource)
+    {
+        _dataSource = dataSource;
+    }
+
+    public IReadOnlyDictionary<string, FeatureDefinition> GetAllDefinitions()
+    {
+        using var command = _dataSource.CreateCommand(
+            """
+            SELECT flag_key, display_name, grp, default_enabled, off_behavior,
+                   requires, conflicts, runtime_scope, edition_min, requires_plugin, always_on
+            FROM feature_flag ORDER BY sort_no
+            """);
+        using var reader = command.ExecuteReader();
+        var definitions = new Dictionary<string, FeatureDefinition>(70, StringComparer.Ordinal);
+        while (reader.Read())
+        {
+            definitions[reader.GetString(0)] = new FeatureDefinition(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetBoolean(3),
+                reader.GetString(4)[0],
+                MapArray(reader, 5),
+                MapArray(reader, 6),
+                reader.GetString(7),
+                reader.GetString(8),
+                reader.GetBoolean(9),
+                reader.GetBoolean(10));
+        }
+
+        return definitions;
+    }
+
+    public bool? Resolve(string key, FeatureScope? scope)
+    {
+        using var command = _dataSource.CreateCommand(
+            """
+            -- 窄覆盖宽：line(3) > workshop(2) > factory(1) > global(0)，
+            -- 同层取 effective_from 最新且当前生效的一条；无匹配 = 无覆盖（调用方用 default）
+            SELECT enabled FROM feature_scope
+            WHERE flag_key = @key
+              AND (effective_from IS NULL OR effective_from <= now())
+              AND (effective_to IS NULL OR effective_to > now())
+            ORDER BY CASE scope_type WHEN 'line' THEN 3 WHEN 'workshop' THEN 2
+                                     WHEN 'factory' THEN 1 ELSE 0 END DESC,
+                     effective_from DESC NULLS LAST
+            LIMIT 1
+            """);
+        command.Parameters.AddWithValue("key", key);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? reader.GetBoolean(0) : null;
+    }
+
+    public long GetVersion()
+    {
+        using var command = _dataSource.CreateCommand("SELECT version FROM feature_version WHERE id = 1");
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    public async Task SaveScopeOverrideAsync(string key, string scopeType, string scopeId, bool enabled,
+        string reason, string? ticketNo, long updatedBy, CancellationToken cancellationToken = default)
+    {
+        // 覆盖与版本号推进同事务：读侧要么看到旧值+旧版本，要么新值+新版本，不会错位
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var insert = new NpgsqlCommand(
+            """
+            INSERT INTO feature_scope (flag_key, scope_type, scope_id, enabled, reason, ticket_no, updated_by)
+            VALUES (@key, @scope_type, @scope_id, @enabled, @reason, @ticket_no, @updated_by)
+            """, connection, transaction);
+        insert.Parameters.AddWithValue("key", key);
+        insert.Parameters.AddWithValue("scope_type", scopeType);
+        insert.Parameters.AddWithValue("scope_id", scopeId);
+        insert.Parameters.AddWithValue("enabled", enabled);
+        insert.Parameters.AddWithValue("reason", reason);
+        insert.Parameters.AddWithValue("ticket_no", (object?)ticketNo ?? DBNull.Value);
+        insert.Parameters.AddWithValue("updated_by", updatedBy);
+        await insert.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var bump = new NpgsqlCommand(
+            "UPDATE feature_version SET version = version + 1, updated_at = now() WHERE id = 1",
+            connection, transaction);
+        await bump.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<string, bool>> ResolveKeysAsync(
+        IEnumerable<string> keys, CancellationToken cancellationToken = default)
+    {
+        var result = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var key in keys)
+        {
+            // 复用同步 Resolve（单键查询）；Planner 是低频管理操作，无需批量优化
+            var resolved = Resolve(key, null);
+            if (resolved is { } value)
+            {
+                result[key] = value;
+            }
+        }
+
+        await Task.CompletedTask;
+        return result;
+    }
+
+    // text[] 列直接取 Npgsql 数组映射，避免手工 split
+    private static string[] MapArray(NpgsqlDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? [] : (string[])reader.GetValue(ordinal);
+}

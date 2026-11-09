@@ -10,6 +10,7 @@ using Platform.Host.Write;
 using Platform.Host.Mes;
 using Platform.Host.WorkOrders;
 using Platform.Host.Reports;
+using Platform.Host.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,6 +36,15 @@ builder.Services.AddAcquisition();
 builder.Services.AddMesOutbox();
 // 报表存储（8.1/8.2）：定义读取 + 编译执行 + 审计留痕，复用全局连接池
 builder.Services.AddSingleton<Platform.Core.Reports.ReportStore>();
+// 功能开关（3.7）：定义缓存 30s + feature_version 失效；License/插件就绪用默认实现（M3-5 替换）
+builder.Services.AddSingleton<Platform.Core.Features.FeatureStore>();
+builder.Services.AddSingleton<Platform.Core.Features.IFeatureStore>(sp => sp.GetRequiredService<Platform.Core.Features.FeatureStore>());
+builder.Services.AddSingleton<Platform.Abstractions.Features.IFeatureGate, Platform.Core.Features.FeatureGate>();
+// 同一实例双注册：IFeatureGate 给业务契约方；具体类给 Planner/端点（需要定义态方法）
+builder.Services.AddSingleton(sp => (Platform.Core.Features.FeatureGate)sp.GetRequiredService<Platform.Abstractions.Features.IFeatureGate>());
+builder.Services.AddSingleton<Platform.Core.Features.ILicenseService, Platform.Core.Features.DefaultLicenseService>();
+builder.Services.AddSingleton<Platform.Core.Features.IPluginReadiness, Platform.Core.Features.DefaultPluginReadiness>();
+builder.Services.AddSingleton<Platform.Core.Features.FeatureChangePlanner>();
 
 var app = builder.Build();
 
@@ -52,6 +62,7 @@ app.MapDeviceEndpoints();
 app.MapMesEndpoints();
 app.MapWorkOrderEndpoints();
 app.MapReportEndpoints();
+app.MapFeatureEndpoints();
 app.MapControllers();
 
 app.Run();
