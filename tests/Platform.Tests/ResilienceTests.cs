@@ -18,6 +18,7 @@ public class ResilienceTests
         public event Action? ReadReturned;
 
         public DriverDescriptor Describe() => new("test.flaky", "Flaky", false, 10);
+        public bool IsConnected => true;   // 假驱动不模拟传输层断开（连接失败走 ConnectAsync 路径）
 
         public async Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
         {

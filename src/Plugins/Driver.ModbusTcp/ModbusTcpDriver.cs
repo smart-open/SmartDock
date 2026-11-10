@@ -19,6 +19,13 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
     private NetworkStream? _stream;
     private ushort _transactionId;
     private readonly SemaphoreSlim _gate = new(1, 1);   // 半双工：请求-应答严格串行
+    // 连接状态变更（Connect/Disconnect）串行化：写路径（WriteGuard 经 FindDriver）与
+    // 设备采集循环并发调用幂等 Connect/Disconnect，无锁时会产生「双建连接泄漏」
+    // 「新连接被对方误杀」与 _tcpClient/_stream 两步赋值交错的 NRE
+    private readonly SemaphoreSlim _connectLock = new(1, 1);
+    // 请求-应答超时：半开连接（拔网线/PLC 断电不发 RST）时 ReadAsync 会无限挂起，
+    // 采集循环/写路径全部卡死且不产生 Bad、不触发重连——必须由传输层超时兜底（5.8）
+    private const int SocketTimeoutMs = 3000;
 
     private readonly string _host;
     private readonly int _port;
@@ -35,34 +42,55 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
     public DriverDescriptor Describe() =>
         new(DriverId, "Modbus TCP", SupportsWrite: true, MaxBatchPerRequest: 120);
 
+    public bool IsConnected => _tcpClient?.Connected == true;
+
     public async Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
     {
-        if (_tcpClient?.Connected == true)
-        {
-            return new ConnectResult(true, null);
-        }
-
+        await _connectLock.WaitAsync(cancellationToken);
         try
         {
-            var client = new TcpClient();
-            await client.ConnectAsync(_host, _port, cancellationToken);
-            _tcpClient = client;
-            _stream = client.GetStream();
-            return new ConnectResult(true, null);
+            if (IsConnected)
+            {
+                return new ConnectResult(true, null);
+            }
+
+            try
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(_host, _port, cancellationToken);
+                // 收发超时仅在传输层兜底：正常 PLC 应答远快于此，超时即按连接已死处理
+                client.SendTimeout = SocketTimeoutMs;
+                client.ReceiveTimeout = SocketTimeoutMs;
+                _tcpClient = client;
+                _stream = client.GetStream();
+                return new ConnectResult(true, null);
+            }
+            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException)
+            {
+                return new ConnectResult(false, ex.Message);
+            }
         }
-        catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException)
+        finally
         {
-            return new ConnectResult(false, ex.Message);
+            _connectLock.Release();
         }
     }
 
     public async Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        _stream?.Dispose();
-        _stream = null;
-        _tcpClient?.Dispose();
-        _tcpClient = null;
-        await Task.CompletedTask;
+        await _connectLock.WaitAsync(cancellationToken);
+        try
+        {
+            _stream?.Dispose();
+            _stream = null;
+            _tcpClient?.Dispose();
+            _tcpClient = null;
+            await Task.CompletedTask;
+        }
+        finally
+        {
+            _connectLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<ReadValue>> ReadAsync(
@@ -147,6 +175,12 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
         var pdu = new byte[pduLength - 1];               // 去掉 unitId
         await ReadExactlyAsync(pdu, cancellationToken);
 
+        // 短帧保护：正常应答至少 FC+byteCount（2 字节），异常应答至少 FC+异常码
+        if (pdu.Length < 2)
+        {
+            throw new IOException($" pdu too short: {pdu.Length} byte(s)");
+        }
+
         var functionCode = pdu[0];
 
         // Modbus 异常响应：FC | 0x80 + 1 字节异常码
@@ -230,6 +264,12 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
 
             var pdu = new byte[pduLength - 1];
             await ReadExactlyAsync(pdu, cancellationToken);
+
+            // 短帧保护：异常应答 ≥ FC+异常码（2），FC16 正常应答 = FC+起始地址+数量（5）
+            if (pdu.Length < 5 && (pdu.Length < 2 || (pdu[0] & 0x80) == 0))
+            {
+                throw new IOException($"write response too short: {pdu.Length} byte(s)");
+            }
 
             if ((pdu[0] & 0x80) != 0)
             {
@@ -355,5 +395,6 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
     {
         await DisconnectAsync();
         _gate.Dispose();
+        _connectLock.Dispose();
     }
 }

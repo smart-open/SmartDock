@@ -61,14 +61,15 @@ public sealed class FileLicenseService : ILicenseService
         // 文件在运行期被替换（续费导入）需感知：按文件写入时间戳失效缓存
         lock (_lock)
         {
+            // 探针（存在性+写入时间）先算，失败结果也缓存：损坏文件不能每次调用都重读+重验签
+            //（Current 是热路径——每次 FeatureGate.Get 都会走到，70 键快照 = 70 次 RSA 验签 + 日志灌爆）
             if (!File.Exists(_licenseFilePath))
             {
                 return new LicenseLoadResult(false, null, $"license file not found: {_licenseFilePath}");
             }
 
             var lastWrite = File.GetLastWriteTimeUtc(_licenseFilePath);
-            if (_cached is { Loaded: true } cached && cached.Document is { } cachedDoc &&
-                lastWrite == _lastWriteUtc)
+            if (_cached is { } cached && lastWrite == _lastWriteUtc)
             {
                 return cached;
             }
@@ -103,11 +104,30 @@ public sealed class FileLicenseService : ILicenseService
         return editionOk && listed;
     }
 
+    /// <summary>拒绝原因细分（2.7.4 错误码必须能区分假的原因）：发行版不足 / 未列入授权清单 / 无有效授权。</summary>
+    public string DenyReason(FeatureDefinition flag)
+    {
+        var result = Current();
+        if (!result.Loaded || result.Document is not { } doc)
+        {
+            return "LICENSE_INVALID";
+        }
+
+        var editionOk = EditionRank.GetValueOrDefault(doc.Edition, 0) >= EditionRank.GetValueOrDefault(flag.EditionMin, 0);
+        var listed = doc.Features.Contains(flag.Key, StringComparer.OrdinalIgnoreCase);
+        return editionOk ? "LICENSE_FEATURE_MISSING" : "LICENSE_EDITION";
+    }
+
     /// <summary>13.6.3 到期四阶段：60/30/7 天提醒由看板按 ExpiresAt 自行计算，此处只出阶段。</summary>
     private LicensePhase ComputePhase(LicenseDocument doc)
     {
         var now = _clock.GetUtcNow().UtcDateTime;
-        var days = (now - doc.ExpiresAt).TotalDays;
+        // JSON 反序列化的 DateTime 是 Kind=Unspecified：签发方写的是 UTC（签发契约），
+        // 统一按 UTC 归一，避免按本地时区计算提前/推迟进入 Grace/Degraded
+        var expiresAt = doc.ExpiresAt.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(doc.ExpiresAt, DateTimeKind.Utc)
+            : doc.ExpiresAt.ToUniversalTime();
+        var days = (now - expiresAt).TotalDays;
         return days switch
         {
             < 0 => LicensePhase.Valid,
@@ -140,8 +160,11 @@ public sealed class FileLicenseService : ILicenseService
                 doc.LicenseId, doc.Edition, doc.ExpiresAt);
             return new LicenseLoadResult(true, doc, string.Empty);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException
+            or System.Security.Cryptography.CryptographicException)
         {
+            // CryptographicException：公钥 XML 非法（FromXmlString）等配置/文件损坏形态，
+            // 与读失败同路径按「无授权」运行，不让能力面端点 500
             _logger.LogError(ex, "LICENSE_INVALID: read failed");
             return new LicenseLoadResult(false, null, $"license read failed: {ex.Message}");
         }

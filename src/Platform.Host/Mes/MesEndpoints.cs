@@ -19,10 +19,27 @@ public static class MesEndpoints
         // WorkOrderStore.ChangeStatusAsync 同口径），order_no 含 %/_ 时须转义。
         group.MapPost("/report", async (ReportRequest request, Npgsql.NpgsqlDataSource dataSource) =>
         {
+            // workOrderNo 省略时 EscapeLike(null) NRE → 500；入口挡住
+            if (string.IsNullOrWhiteSpace(request.WorkOrderNo))
+            {
+                return Results.BadRequest(new { error = "workOrderNo is required" });
+            }
+
             await using var connection = await dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             try
             {
+                // seq 计数与插入同事务加 advisory lock：无锁计数下并发报工会算出同序号，
+                // 后提交者撞唯一索引被误判 duplicate=true（全新报工被静默丢弃）。
+                // 键按 workOrderNo+stepNo 粒度，跨工单不互斥
+                await using (var lockCommand = new Npgsql.NpgsqlCommand(
+                    "SELECT pg_advisory_xact_lock(hashtext(@key))", connection, transaction))
+                {
+                    lockCommand.Parameters.AddWithValue("key",
+                        $"production.report:{request.WorkOrderNo}:{request.StepNo}");
+                    await lockCommand.ExecuteScalarAsync();
+                }
+
                 await using var seqCommand = new Npgsql.NpgsqlCommand("""
                     SELECT COUNT(*) FROM mes_outbox
                     WHERE biz_type = 'production.report' AND idempotency_key LIKE @like ESCAPE '\'
@@ -60,6 +77,11 @@ public static class MesEndpoints
         // 设备状态（6.2 接口 7）：deviceCode + state + 5min 时间窗
         group.MapPost("/state", async (StateRequest request, MesOutboxStore store) =>
         {
+            if (string.IsNullOrWhiteSpace(request.DeviceCode))
+            {
+                return Results.BadRequest(new { error = "deviceCode is required" });
+            }
+
             var idempotencyKey = MesIdempotencyKeyBuilder.EquipmentState(
                 request.DeviceCode, request.State, DateTimeOffset.UtcNow);
             var payloadJson = JsonSerializer.Serialize(request);
@@ -109,10 +131,25 @@ public static class MesEndpoints
         });
 
         // 死信人工重放（04 验收 #21：Dead → Pending，attempts 清零重走阶梯）
-        group.MapPost("/dead/{id}/replay", async (long id, MesOutboxStore store) =>
+        // 运维敏感操作：要求 X-Operator 为真实启用的用户（匿名循环重放可制造重复推送压力）。
+        // QueryPermissions 对停用/锁定/不存在用户返回空 → 视为无权限
+        group.MapPost("/dead/{id}/replay", async (long id, MesOutboxStore store,
+            Npgsql.NpgsqlDataSource dataSource, HttpContext context) =>
         {
+            var operatorId = Platform.Host.Auth.OperatorContext.ParseOperator(context);
+            if (operatorId is null)
+            {
+                return Results.Json(new { error = "X-Operator header required" }, statusCode: 401);
+            }
+
+            var permissions = await dataSource.QueryPermissionsAsync(operatorId.Value);
+            if (permissions.Count == 0)
+            {
+                return Results.Json(new { error = "forbidden: operator has no permissions" }, statusCode: 403);
+            }
+
             await store.RequeueAsync(id);
-            return Results.Ok(new { id, requeued = true });
+            return Results.Ok(new { id, requeued = true, operator = operatorId.Value });
         });
 
         /// <summary>LIKE 模式转义（\ % _），与 WorkOrderStore.EscapeLike 同口径。</summary>

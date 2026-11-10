@@ -11,10 +11,11 @@ public static class AlarmEndpoints
 {
     public static void MapAlarmEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/alarms", (AlarmStore store, bool? active) =>
-            Results.Ok(store.ListAsync(active ?? true).GetAwaiter().GetResult()));
+        // 原实现 GetAwaiter().GetResult() 阻塞线程池（高并发轮询白耗线程），改 async
+        app.MapGet("/api/alarms", async (AlarmStore store, bool? active) =>
+            Results.Ok(await store.ListAsync(active ?? true)));
 
-        app.MapPost("/api/alarms/{id:long}/ack", (long id, AlarmStore store, HttpRequest request) =>
+        app.MapPost("/api/alarms/{id:long}/ack", async (long id, AlarmStore store, HttpRequest request) =>
         {
             var operatorHeader = request.Headers["X-Operator"].FirstOrDefault();
             if (!long.TryParse(operatorHeader, out var operatorId))
@@ -22,7 +23,7 @@ public static class AlarmEndpoints
                 return Results.Unauthorized();
             }
 
-            var acked = store.AckAsync(id, operatorId).GetAwaiter().GetResult();
+            var acked = await store.AckAsync(id, operatorId);
             return acked ? Results.Ok(new { acked = true }) : Results.NotFound(new { acked = false });
         });
     }

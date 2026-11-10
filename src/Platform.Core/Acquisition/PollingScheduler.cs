@@ -153,7 +153,7 @@ public sealed class PollingScheduler : IAsyncDisposable
                 // 不能让 Task.Run 里这个未观测异常静默杀死设备循环（3.2 失败策略），
                 // 走与其他失败相同的指数退避重试，并持续告警。
                 retryCount++;
-                var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, Math.Min(retryCount, 5)), 30));
+                var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, Math.Min(retryCount - 1, 5)), 30));
                 _logger.LogError(ex, "device {Device}: loop crashed (attempt {Retry}), recreate driver in {Backoff}",
                     entry.Device.DeviceCode, retryCount, backoff);
                 try
@@ -197,8 +197,8 @@ public sealed class PollingScheduler : IAsyncDisposable
                     connectRetryCount++;
                     // 从未上线（首次连接）或重连持续失败也要报离线——报警源不能漏「一直连不上」的设备
                     NotifyConnectionChanged(entry.Device.DeviceId, entry.Device.DeviceCode, connected: false);
-                    // 指数退避：1s→2s→4s→…→30s 封顶
-                    var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, connectRetryCount), 30));
+                    // 指数退避：1s→2s→4s→…→30s 封顶（5.8 的 1s 起步）
+                    var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, connectRetryCount - 1), 30));
                     _logger.LogWarning("device {Device}: driver connect failed (attempt {Retry}): {Error}, retry in {Backoff}",
                         entry.Device.DeviceCode, connectRetryCount, connect.Error, backoff);
                     await Task.Delay(backoff, cancellationToken);
@@ -230,7 +230,9 @@ public sealed class PollingScheduler : IAsyncDisposable
                 }
 
                 // 全部 Bad + 驱动报告连接错误 → 标记断开，下轮走重连
-                if (values.Count > 0 && values.All(v => v.Quality == QualityCode.Bad))
+                // 必须同时看传输层连接状态：地址配错也会全 Bad 但 TCP 健在，
+                // 只看质量码会让「离线→重连成功→离线」每个周期翻转一次（报警风暴）
+                if (values.Count > 0 && values.All(v => v.Quality == QualityCode.Bad) && !driver.IsConnected)
                 {
                     connected = false;
                     NotifyConnectionChanged(entry.Device.DeviceId, entry.Device.DeviceCode, connected: false);
@@ -240,6 +242,11 @@ public sealed class PollingScheduler : IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
+                break;
+            }
+            catch (System.Threading.Channels.ChannelClosedException)
+            {
+                // 流水线已停（Host 停机）：退出循环而不是当成通信失败报虚假 OFFLINE 沿
                 break;
             }
             catch (Exception ex)

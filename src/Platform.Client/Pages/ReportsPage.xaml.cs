@@ -14,11 +14,12 @@ using Platform.Client.Services;
 public partial class ReportsPage : UserControl
 {
     private readonly ReportApiClient _apiClient;
+    private bool _busy;   // 查询/导出防重入：35s 超时窗口内连点会叠加请求、后完成者覆盖结果
 
-    public ReportsPage(string baseAddress)
+    public ReportsPage(string baseAddress, long operatorId)
     {
         InitializeComponent();
-        _apiClient = new ReportApiClient(baseAddress);
+        _apiClient = new ReportApiClient(baseAddress, operatorId);
         FromDate.SelectedDate = DateTime.Today.AddDays(-7);
         ToDate.SelectedDate = DateTime.Today;
         _ = LoadReportsAsync();
@@ -73,12 +74,18 @@ public partial class ReportsPage : UserControl
 
     private async void OnQueryClick(object sender, RoutedEventArgs e)
     {
+        if (_busy)
+        {
+            return;
+        }
+
         if (!Validate(out var validationError))
         {
             ErrorText.Text = validationError;
             return;
         }
 
+        _busy = true;
         var code = ((ReportDefDto)ReportCombo.SelectedItem).Code;
         try
         {
@@ -94,16 +101,26 @@ public partial class ReportsPage : UserControl
             ErrorText.Text = $"查询失败：{ex.Message}";
             StatusText.Text = string.Empty;
         }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async void OnExportClick(object sender, RoutedEventArgs e)
     {
+        if (_busy)
+        {
+            return;
+        }
+
         if (!Validate(out var validationError))
         {
             ErrorText.Text = validationError;
             return;
         }
 
+        _busy = true;
         var code = ((ReportDefDto)ReportCombo.SelectedItem).Code;
         try
         {
@@ -118,6 +135,10 @@ public partial class ReportsPage : UserControl
         {
             ErrorText.Text = $"导出失败：{ex.Message}";
             StatusText.Text = string.Empty;
+        }
+        finally
+        {
+            _busy = false;
         }
     }
 

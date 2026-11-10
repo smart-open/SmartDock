@@ -53,12 +53,30 @@ public sealed class AcquisitionPipeline : IAsyncDisposable
     private async Task ConsumeAsync(CancellationToken cancellationToken)
     {
         var batch = new List<ReadValue>(_options.MaxBatchSize);
+        var pendingRetry = false;   // flush 失败后 batch 保留、重试自驱动（不依赖新数据到达）
 
-        while (await _queue.Reader.WaitToReadAsync(cancellationToken))
+        while (true)
         {
-            while (batch.Count < _options.MaxBatchSize && _queue.Reader.TryRead(out var readValue))
+            // 停机检查必须独立于 pendingRetry：重试期间通道完成也要转排空，
+            // 否则 StopAsync 会卡在无限重试里不返回
+            if (_queue.Reader.Completion.IsCompleted)
             {
-                batch.Add(readValue);
+                break;
+            }
+
+            if (!pendingRetry)
+            {
+                // 无待重试批次才等新数据：flush 失败后队列空也要继续重试（2.6A 不可丢），
+                // 否则「DB 故障 + 设备恰好也停了」时批次永久滞留内存
+                if (!await _queue.Reader.WaitToReadAsync(cancellationToken))
+                {
+                    break;   // 通道完成（停机），转排空
+                }
+
+                while (batch.Count < _options.MaxBatchSize && _queue.Reader.TryRead(out var readValue))
+                {
+                    batch.Add(readValue);
+                }
             }
 
             if (batch.Count > 0)
@@ -70,13 +88,16 @@ public sealed class AcquisitionPipeline : IAsyncDisposable
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // 不可丢语义：落库失败不能让消费者死亡（数据全丢）。
-                    // M0 简版：等待后重试同一批；M1 换 L2 WAL 落盘重放（2.6A.6）
+                    // 等待后重试同一批（pendingRetry=true 使下一轮跳过 WaitToReadAsync 直接 flush）；
+                    // M1 换 L2 WAL 落盘重放（2.6A.6）
                     OnFlushError(ex);
                     await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
-                    continue;   // batch 保留，下轮重试
+                    pendingRetry = true;
+                    continue;
                 }
 
                 batch.Clear();
+                pendingRetry = false;
             }
 
             // 攒批时间窗：队列暂空时等待，凑够时间窗内的更多点
@@ -86,15 +107,39 @@ public sealed class AcquisitionPipeline : IAsyncDisposable
             }
         }
 
-        // 停止前排空残余
+        // 停止前排空残余：带有限重试——停机窗口撞 DB 抖动时也不能静默丢批（2.6A）
         while (_queue.Reader.TryRead(out var tail))
         {
             batch.Add(tail);
         }
 
+        for (var attempt = 0; batch.Count > 0 && attempt < 3; attempt++)
+        {
+            try
+            {
+                await _flushAsync(batch, CancellationToken.None);
+                batch.Clear();
+            }
+            catch (Exception ex)
+            {
+                // 停机排空失败：最后一次机会用尽后如实告警（数据留在日志里可追溯），
+                // 不能把异常抛给 StopAsync/DisposeAsync 让宿主把停机当故障
+                OnFlushError(ex);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
+                }
+                catch
+                {
+                    // 排空阶段不允许被取消打断
+                }
+            }
+        }
+
         if (batch.Count > 0)
         {
-            await _flushAsync(batch, CancellationToken.None);
+            OnFlushError(new InvalidOperationException(
+                $"pipeline drained with {batch.Count} samples unflushed after retries (shutdown, data NOT persisted)"));
         }
     }
 
@@ -104,9 +149,10 @@ public sealed class AcquisitionPipeline : IAsyncDisposable
         {
             await StopAsync();
         }
-        catch (OperationCanceledException)
+        catch
         {
-            // stopping already
+            // Dispose 不允许抛：停机竞态（取消/通道关闭/排空失败）都在 StopAsync 内有兜底，
+            // 这里再兜一层保证宿主停机路径不会被流水线异常打断
         }
 
         _stoppingCts.Dispose();

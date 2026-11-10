@@ -76,7 +76,9 @@ public static class AcquisitionServiceCollectionExtensions
             return new WriteGuard(
                 driverResolver: scheduler.FindDriver,
                 pointResolver: scheduler.FindPoint,
-                persistAsync: (pointId, value) => writeStore.InsertPendingAsync(pointId, value, "m1-operator"),
+                // 操作者随命令落库（V003 DDL：operator = 第一道闸权限留痕）；
+                // 原实现硬编码 "m1-operator"，审计表查不到真实操作者
+                persistAsync: (pointId, value, operatorId) => writeStore.InsertPendingAsync(pointId, value, operatorId),
                 markRejectedAsync: (commandId, reason) => writeStore.MarkRejectedAsync(commandId, reason),
                 markSentAsync: commandId => writeStore.MarkSentAsync(commandId),
                 finishAsync: (commandId, error, verified, readBack) =>

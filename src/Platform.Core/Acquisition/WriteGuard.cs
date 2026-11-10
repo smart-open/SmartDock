@@ -27,7 +27,7 @@ public sealed class WriteGuard
 
     private readonly Func<long, IDeviceDriver?> _driverResolver;
     private readonly Func<long, PointRef?> _pointResolver;
-    private readonly Func<long, double, Task<long>> _persistAsync;   // 闸 3：落库，返回 commandId
+    private readonly Func<long, double, string, Task<long>> _persistAsync;   // 闸 3：落库，返回 commandId
     private readonly Func<long, string, Task> _markRejectedAsync;    // 拒绝留痕
     private readonly Func<long, Task> _markSentAsync;
     private readonly Func<long, string?, bool, double?, Task> _finishAsync;  // DONE/FAILED + 回读值
@@ -38,7 +38,7 @@ public sealed class WriteGuard
     public WriteGuard(
         Func<long, IDeviceDriver?> driverResolver,
         Func<long, PointRef?> pointResolver,
-        Func<long, double, Task<long>> persistAsync,
+        Func<long, double, string, Task<long>> persistAsync,
         Func<long, string, Task> markRejectedAsync,
         Func<long, Task> markSentAsync,
         Func<long, string?, bool, double?, Task> finishAsync,
@@ -68,7 +68,12 @@ public sealed class WriteGuard
         var point = _pointResolver(pointId);
         if (point is null)
         {
-            return await RejectAsync(0, operatorName, pointId, value, $"unknown point {pointId}");
+            // 未知点位不落库：write_command.point_id 有 device_point 外键，
+            // 落 REJECTED 痕必然违反 FK 变裸 500（拒绝留痕只对真实点位成立）
+            _logger.LogWarning("write rejected: point {PointId} = {Value} by {Operator}: unknown point",
+                pointId, value, operatorName);
+            return new WriteGuardResult(CommandId: 0, Accepted: false,
+                RejectReason: $"unknown point {pointId}", Verified: false, ReadBackValue: null);
         }
 
         if (_interlockCheck is not null)
@@ -81,10 +86,33 @@ public sealed class WriteGuard
         }
 
         // —— 闸 3：先落库再执行（PENDING）——
-        var commandId = await _persistAsync(pointId, value);
+        var commandId = await _persistAsync(pointId, value, operatorName);
+
+        // 执行段整体兜底：连接/写/回读任何一步抛异常（驱动 NRE、宿主重启窗口、停机取消、
+        // 落库函数本身故障）都不能让命令卡在 PENDING/SENT——必须写终态，否则审计链断裂
+        try
+        {
+            return await ExecuteCoreAsync(commandId, pointId, point.Value, value, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // 取消（客户端断开/停机）：命令已留痕，写 FAILED 终态再按取消语义上抛
+            await SafeFinishAsync(commandId, "write aborted: cancelled during execution");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await SafeFinishAsync(commandId, $"write aborted: {ex.Message}");
+            throw;
+        }
+    }
+
+    private async Task<WriteGuardResult> ExecuteCoreAsync(long commandId, long pointId, PointRef point, double value,
+        CancellationToken cancellationToken)
+    {
 
         // —— 执行：找到该设备的驱动实例（调度器持有，按 deviceId 解析）——
-        if (_driverResolver(point.Value.DeviceId) is not IDeviceWriteDriver writeDriver)
+        if (_driverResolver(point.DeviceId) is not IDeviceWriteDriver writeDriver)
         {
             return await FailAsync(commandId, "device driver does not support write (or device offline)");
         }
@@ -96,7 +124,7 @@ public sealed class WriteGuard
             return await FailAsync(commandId, $"connect failed: {connect.Error}");
         }
 
-        var writeResult = await writeDriver.WriteAsync(point.Value, value, cancellationToken);
+        var writeResult = await writeDriver.WriteAsync(point, value, cancellationToken);
         if (!writeResult.Success)
         {
             return await FailAsync(commandId, $"write failed: {writeResult.Error}");
@@ -135,11 +163,25 @@ public sealed class WriteGuard
         return new WriteGuardResult(commandId, Accepted: true, RejectReason: null, verified, readBack);
     }
 
+    /// <summary>终态落库失败只记日志：命令卡中间态总好过把终态异常再抛给调用方掩盖原始异常。</summary>
+    private async Task SafeFinishAsync(long commandId, string error)
+    {
+        try
+        {
+            await _finishAsync(commandId, error, false, null);
+            _logger.LogWarning("write command {CommandId} aborted: {Error}", commandId, error);
+        }
+        catch (Exception finishEx)
+        {
+            _logger.LogError(finishEx, "write command {CommandId}: failed to record FAILED state", commandId);
+        }
+    }
+
     private async Task<WriteGuardResult> RejectAsync(long commandId, string operatorName, long pointId,
         double value, string reason)
     {
         // 拒绝也必须落库留痕（REJECTED），否则审计链断裂
-        var id = commandId != 0 ? commandId : await _persistAsync(pointId, value);
+        var id = commandId != 0 ? commandId : await _persistAsync(pointId, value, operatorName);
         await _markRejectedAsync(id, reason);
         _logger.LogWarning("write rejected: point {PointId} = {Value} by {Operator}: {Reason}",
             pointId, value, operatorName, reason);

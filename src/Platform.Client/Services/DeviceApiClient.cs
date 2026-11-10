@@ -9,11 +9,7 @@ public sealed record DeviceSummaryDto(
 /// <summary>设备台账只读客户端（M1-9 设备页；管理操作随 M3）。</summary>
 public sealed class DeviceApiClient(string baseAddress)
 {
-    private readonly HttpClient _httpClient = new()
-    {
-        BaseAddress = new Uri(baseAddress),
-        Timeout = TimeSpan.FromSeconds(5),
-    };
+    private readonly HttpClient _httpClient = HttpClientHolder.Get(baseAddress, TimeSpan.FromSeconds(5));
 
     public async Task<IReadOnlyList<DeviceSummaryDto>> GetDevicesAsync(CancellationToken cancellationToken = default)
     {

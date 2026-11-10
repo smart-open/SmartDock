@@ -97,8 +97,10 @@ public static class FeatureEndpoints
             }
 
             // 全部通过才落库：幂等键（值未变）不产生覆盖行
+            // 审计字段取 item 级：Planner 校验的是 item.Reason/TicketNo，
+            // 落库记的必须是同一个理由（否则审计行与被校验内容不一致）
             var pending = plans.Where(entry => !entry.Idempotent)
-                .Select(entry => (entry.Item.Key, entry.Item.Enabled, request.Reason, request.TicketNo))
+                .Select(entry => (entry.Item.Key, entry.Item.Enabled, entry.Item.Reason, entry.Item.TicketNo))
                 .ToList();
             if (pending.Count > 0)
             {
@@ -116,7 +118,7 @@ public static class FeatureEndpoints
 
         // 回滚：撤销该键最近一次变更（3.7.5 rollback），恢复默认生效值
         group.MapPost("/{key}/rollback", async (string key,
-            FeatureStore store, FeatureGate gate, HttpContext context,
+            FeatureStore store, FeatureGate gate, IUserScopeStore scopeStore, HttpContext context,
             CancellationToken cancellationToken) =>
         {
             var operatorId = OperatorContext.ParseOperator(context);
@@ -125,7 +127,21 @@ public static class FeatureEndpoints
                 return Results.Json(new { error = "X-Operator header required" }, statusCode: 401);
             }
 
-            // 回滚也是变更，走同一权限口径：无覆盖行时无可回滚
+            // 回滚也是变更，走同一权限口径（原实现只验 header 存在，绕过了 Planner 六步——
+            // 降权用户改不了开关却能回滚开关，是可利用的越权写入口）
+            var permissions = await scopeStore.GetPermissionsAsync(operatorId.Value, cancellationToken);
+            if (!permissions.Contains("platform:feature:write", StringComparer.Ordinal))
+            {
+                return Results.Json(new { error = "missing permission: platform:feature:write" }, statusCode: 403);
+            }
+
+            var scopes = await scopeStore.GetScopesAsync(operatorId.Value, cancellationToken);
+            if (!scopes.Any(scope => scope.ScopeType == "all"))
+            {
+                return Results.Json(new { error = "data scope does not include all" }, statusCode: 403);
+            }
+
+            // 无覆盖行时无可回滚
             var rolledBack = await store.DeleteLastScopeOverrideAsync(key, operatorId.Value, cancellationToken);
             if (!rolledBack)
             {
@@ -136,9 +152,23 @@ public static class FeatureEndpoints
             return Results.Ok(new { key, rolledBack = true });
         });
 
-        // 排障用：怀疑缓存错位时手动强刷（3.7.5 reload）
-        group.MapPost("/reload", (FeatureGate gate) =>
+        // 排障用：怀疑缓存错位时手动强刷（3.7.5 reload）。
+        // 匿名强刷可被用来干扰多节点缓存一致性，按变更口径要求 feature:write 权限
+        group.MapPost("/reload", async (FeatureGate gate, IUserScopeStore scopeStore, HttpContext context,
+            CancellationToken cancellationToken) =>
         {
+            var operatorId = OperatorContext.ParseOperator(context);
+            if (operatorId is null)
+            {
+                return Results.Json(new { error = "X-Operator header required" }, statusCode: 401);
+            }
+
+            var permissions = await scopeStore.GetPermissionsAsync(operatorId.Value, cancellationToken);
+            if (!permissions.Contains("platform:feature:write", StringComparer.Ordinal))
+            {
+                return Results.Json(new { error = "missing permission: platform:feature:write" }, statusCode: 403);
+            }
+
             gate.InvalidateCache();
             return Results.Ok(new { reloaded = true });
         });

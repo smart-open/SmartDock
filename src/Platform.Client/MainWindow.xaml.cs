@@ -52,34 +52,41 @@ public partial class MainWindow : Window
     /// </summary>
     private async void OnLoadedBuildPluginNavigation(object sender, RoutedEventArgs e)
     {
+        // 整个方法体必须兜底：WPF 的 Loaded 在窗口每次重新进入可视树都会触发
+        // （重复触发会产生重复导航按钮）；且 AllEnabled/Add 任何异常冒出去都会
+        // 杀整壳，与本文件主张的 4.9.1 隔离口径相悖
         try
         {
+            if (PluginNavPanel.Children.Count > 0)
+            {
+                return;   // 已构建过：WPF Loaded 可多次触发，直接跳过防重复
+            }
+
             await _featureGate.LoadAsync();
+
+            foreach (var provider in _pluginPages)
+            {
+                if (!_featureGate.AllEnabled(provider.Page.RequiresFeatures))
+                {
+                    continue;
+                }
+
+                PluginNavPanel.Children.Add(new Button
+                {
+                    Content = provider.Page.Title,
+                    Height = 36,
+                    Margin = new Thickness(8, 4, 8, 4),
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(12, 0, 0, 0),
+                    Tag = provider.Page.Route,
+                });
+                // 动态生成的事件挂接放标签外层（点击路由统一走 OnPluginNavClick）
+                ((Button)PluginNavPanel.Children[^1]).Click += OnPluginNavClick;
+            }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.WriteLine($"feature snapshot failed, plugin nav skipped: {ex.Message}");
-            return;
-        }
-
-        foreach (var provider in _pluginPages)
-        {
-            if (!_featureGate.AllEnabled(provider.Page.RequiresFeatures))
-            {
-                continue;
-            }
-
-            PluginNavPanel.Children.Add(new Button
-            {
-                Content = provider.Page.Title,
-                Height = 36,
-                Margin = new Thickness(8, 4, 8, 4),
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Padding = new Thickness(12, 0, 0, 0),
-                Tag = provider.Page.Route,
-            });
-            // 动态生成的事件挂接放标签外层（点击路由统一走 OnPluginNavClick）
-            ((Button)PluginNavPanel.Children[^1]).Click += OnPluginNavClick;
+            System.Diagnostics.Trace.WriteLine($"plugin nav build failed: {ex.Message}");
         }
     }
 
@@ -153,7 +160,7 @@ public partial class MainWindow : Window
         {
             "devices" => ("设备", (Func<System.Windows.UIElement>)(() => new Pages.DevicesPage(_baseAddress))),
             "alarms" => ("报警", (Func<System.Windows.UIElement>)(() => new Pages.AlarmsPage(_baseAddress, _session.UserId))),
-            "reports" => ("报表", (Func<System.Windows.UIElement>)(() => new Pages.ReportsPage(_baseAddress))),
+            "reports" => ("报表", (Func<System.Windows.UIElement>)(() => new Pages.ReportsPage(_baseAddress, _session.UserId))),
             _ => ("点位", (Func<System.Windows.UIElement>)(() => new Pages.PointsPage(_baseAddress, pollSeconds))),
         };
         var platformHost = new Hosting.PluginPageHost(page);
@@ -178,7 +185,9 @@ public partial class MainWindow : Window
             var path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
             var json = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(path));
             var api = json.RootElement.GetProperty("Api");
-            return api.TryGetProperty("PollSeconds", out var poll) ? poll.GetInt32() : 1;
+            // 钳制下限 1：配置写 0 会被 DispatcherTimer 以最快频率 Tick，
+            // 1s 一次的 HTTP 请求直接打爆 UI 线程和服务端
+            return api.TryGetProperty("PollSeconds", out var poll) ? Math.Max(1, poll.GetInt32()) : 1;
         }
         catch
         {

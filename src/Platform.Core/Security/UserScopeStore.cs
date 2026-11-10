@@ -70,6 +70,9 @@ public sealed class UserScopeStore(NpgsqlDataSource dataSource) : IUserScopeStor
             """
             SELECT DISTINCT p.perm_code
             FROM sys_user_role ur
+            JOIN sys_user u ON u.id = ur.user_id
+                AND u.status = 1
+                AND (u.locked_until IS NULL OR u.locked_until <= now())
             JOIN sys_role_permission rp ON rp.role_id = ur.role_id
             JOIN sys_permission p ON p.id = rp.perm_id
             WHERE ur.user_id = @user_id
@@ -97,6 +100,9 @@ public static class OperatorPermissionExtensions
             """
             SELECT DISTINCT p.perm_code
             FROM sys_user_role ur
+            JOIN sys_user u ON u.id = ur.user_id
+                AND u.status = 1
+                AND (u.locked_until IS NULL OR u.locked_until <= now())
             JOIN sys_role_permission rp ON rp.role_id = ur.role_id
             JOIN sys_permission p ON p.id = rp.perm_id
             WHERE ur.user_id = @user_id

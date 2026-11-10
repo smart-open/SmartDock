@@ -1,4 +1,6 @@
 using Platform.Core.Acquisition;
+using Platform.Core.Security;
+using Platform.Host.Auth;
 
 namespace Platform.Host.Write;
 
@@ -9,13 +11,22 @@ public static class WriteEndpoints
 {
     public static IEndpointRouteBuilder MapWriteEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/api/write", async (WriteRequest request, WriteGuard writeGuard, HttpContext context) =>
+        endpoints.MapPost("/api/write", async (WriteRequest request, WriteGuard writeGuard,
+            Npgsql.NpgsqlDataSource dataSource, HttpContext context) =>
         {
-            // 闸 1（权限/身份）：M1 简化——operator 取 header，缺省拒绝（不允许匿名写）
-            var operatorName = context.Request.Headers["X-Operator"].FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(operatorName))
+            // 闸 1（权限/身份）：X-Operator 承载用户 id（与 Feature/Identity 端点同源），
+            // 权限实时查库（降权立即生效）。原实现只验 header 非空——写值是平台最危险
+            // 的操作，device:write 权限码必须在这里落地（RBAC 完整版随 M3-9 换 JWT）
+            var operatorId = OperatorContext.ParseOperator(context);
+            if (operatorId is null)
             {
                 return Results.Json(new { error = "X-Operator header required (gate 1: identity)" }, statusCode: 401);
+            }
+
+            var permissions = await dataSource.QueryPermissionsAsync(operatorId.Value);
+            if (!permissions.Contains("device:write", StringComparer.Ordinal))
+            {
+                return Results.Json(new { error = "missing permission: device:write" }, statusCode: 403);
             }
 
             if (request.PointId <= 0)
@@ -23,7 +34,7 @@ public static class WriteEndpoints
                 return Results.Json(new { error = "pointId must be positive" }, statusCode: 400);
             }
 
-            var result = await writeGuard.ExecuteAsync(operatorName, request.PointId, request.Value);
+            var result = await writeGuard.ExecuteAsync(operatorId.Value.ToString(), request.PointId, request.Value);
             return result.Error is not null
                 ? // 执行失败（设备不可达/写失败）：write_command 已留 FAILED 痕，但绝不能回 200——
                   // 客户端必须能区分「写成功但回读不符」与「设备根本没写进去」
@@ -44,7 +55,9 @@ public static class WriteEndpoints
                     commandId = result.CommandId,
                     rejected = true,
                     reason = result.RejectReason,
-                }, statusCode: 403);
+                },
+                // 未知点位（commandId=0，无法留痕）按 404 与「权限拒绝 403」区分开
+                statusCode: result.CommandId == 0 ? 404 : 403);
         });
         return endpoints;
     }

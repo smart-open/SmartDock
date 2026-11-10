@@ -72,12 +72,21 @@ public sealed class FeatureStore : IFeatureStore
 
     public bool? Resolve(string key, FeatureScope? scope)
     {
+        // 只解析与请求范围匹配的覆盖层：global 恒生效，factory/workshop/line 各自
+        // 精确匹配 scope_id。否则任意一条 line 级覆盖会压过全平台所有范围
+        //（02 §3.7.1「line > workshop > factory > global」是层级优先序，不是无差别压序）
         using var command = _dataSource.CreateCommand(
             """
             -- 窄覆盖宽：line(3) > workshop(2) > factory(1) > global(0)，
             -- 同层取 effective_from 最新且当前生效的一条；无匹配 = 无覆盖（调用方用 default）
             SELECT enabled FROM feature_scope
             WHERE flag_key = @key
+              AND (
+                    scope_type = 'global'
+                    OR (scope_type = 'factory'  AND @factory  IS NOT NULL AND scope_id = @factory)
+                    OR (scope_type = 'workshop' AND @workshop IS NOT NULL AND scope_id = @workshop)
+                    OR (scope_type = 'line'     AND @line     IS NOT NULL AND scope_id = @line)
+                  )
               AND (effective_from IS NULL OR effective_from <= now())
               AND (effective_to IS NULL OR effective_to > now())
             ORDER BY CASE scope_type WHEN 'line' THEN 3 WHEN 'workshop' THEN 2
@@ -87,6 +96,11 @@ public sealed class FeatureStore : IFeatureStore
             LIMIT 1
             """);
         command.Parameters.AddWithValue("key", key);
+        var scopeValue = scope ?? new FeatureScope(string.Empty);
+        command.Parameters.AddWithValue("factory",
+            string.IsNullOrEmpty(scopeValue.Factory) ? DBNull.Value : scopeValue.Factory);
+        command.Parameters.AddWithValue("workshop", (object?)scopeValue.Workshop ?? DBNull.Value);
+        command.Parameters.AddWithValue("line", (object?)scopeValue.Line ?? DBNull.Value);
         using var reader = command.ExecuteReader();
         return reader.Read() ? reader.GetBoolean(0) : null;
     }

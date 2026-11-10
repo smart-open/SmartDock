@@ -25,11 +25,7 @@ public sealed class RemoteFeatureGate(string baseAddress)
         PropertyNameCaseInsensitive = true,   // 容忍 Host 侧命名策略调整，不与序列化细节耦合
     };
 
-    private readonly HttpClient _httpClient = new()
-    {
-        BaseAddress = new Uri(baseAddress),
-        Timeout = TimeSpan.FromSeconds(5),
-    };
+    private readonly HttpClient _httpClient = HttpClientHolder.Get(baseAddress, TimeSpan.FromSeconds(5));
 
     private Dictionary<string, FeatureStateDto>? _snapshot;
 

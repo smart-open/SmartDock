@@ -101,9 +101,20 @@ public static class SqlTemplateCompiler
 
         // 规则 5：行数上限——limit 恒由平台设定，取 min(用户 limit, max_rows)，
         // 无用户 limit 时用参数定义的默认值（仍受 max_rows 钳制），防止单次拖库
-        var userLimit = userParams.TryGetValue("limit", out var rawLimit) && rawLimit is int parsedLimit
-            ? parsedLimit
-            : (int?)null;
+        // limit 来自 HTTP JSON → System.Text.Json 反序列化成 JsonElement（不是 int），
+        // 原实现 `rawLimit is int` 恒 false → 用户 limit 被静默忽略
+        int? userLimit = null;
+        if (userParams.TryGetValue("limit", out var rawLimit))
+        {
+            userLimit = rawLimit switch
+            {
+                int parsedLimit => parsedLimit,
+                System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Number } element
+                    when element.TryGetInt32(out var jsonLimit) => jsonLimit,
+                _ => null,
+            };
+        }
+
         var defaultLimit = int.TryParse(paramDefs.FirstOrDefault(def => def.Name == "limit")?.DefaultText, out var parsedDefault)
             ? parsedDefault
             : (int?)null;
@@ -159,8 +170,10 @@ public static class SqlTemplateCompiler
                 _ => throw new ReportCompileException($"unknown param type: {def.Type}")
             };
         }
-        catch (FormatException)
+        catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException)
         {
+            // OverflowException（99999999999）/文化相关 ArgumentException 与 FormatException
+            // 同为「参数非法」：统一收敛为编译拒绝（400），不能穿透成裸 500
             throw new ReportCompileException($"param {def.Name} expects {def.Type}, got '{text}'");
         }
     }

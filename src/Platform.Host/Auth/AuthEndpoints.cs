@@ -53,11 +53,34 @@ public static class AuthEndpoints
                 }
             }
 
-            // 统一失败口径（用户不存在 / 密码错 / 停用 / 锁定），防账号枚举
-            if (storedHash is null || !enabled || locked || !PasswordHasher.Verify(request.Password, storedHash))
+            // 统一失败口径（用户不存在 / 密码错 / 停用 / 锁定），防账号枚举。
+            // 防爆破落地：连续 5 次密码错误锁 15 分钟（V012 failed_logins）；
+            // 停用/锁定/用户不存在不计数（只对「账号真实存在且在用但密码错」累计）
+            var passwordOk = storedHash is not null && PasswordHasher.Verify(request.Password, storedHash);
+            if (storedHash is null || !enabled || locked || !passwordOk)
             {
+                if (userId != 0 && storedHash is not null && enabled && !locked && !passwordOk)
+                {
+                    await using var failCommand = dataSource.CreateCommand(
+                        """
+                        UPDATE sys_user
+                        SET failed_logins = failed_logins + 1,
+                            locked_until = CASE WHEN failed_logins + 1 >= 5
+                                THEN now() + interval '15 minutes' ELSE locked_until END
+                        WHERE id = @id
+                        """);
+                    failCommand.Parameters.AddWithValue("id", userId);
+                    await failCommand.ExecuteNonQueryAsync();
+                }
+
                 return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
             }
+
+            // 登录成功清零失败计数并解除锁定标记（locked 已过期的情况）
+            await using var resetCommand = dataSource.CreateCommand(
+                "UPDATE sys_user SET failed_logins = 0, locked_until = NULL WHERE id = @id");
+            resetCommand.Parameters.AddWithValue("id", userId);
+            await resetCommand.ExecuteNonQueryAsync();
 
             // 权限码按角色一次查全（M1 权限就两个，join 开销可忽略）
             var permissions = new List<string>();

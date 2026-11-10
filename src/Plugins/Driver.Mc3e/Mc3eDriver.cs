@@ -24,6 +24,10 @@ public sealed class Mc3eDriver : IDeviceDriver
     private TcpClient? _tcpClient;
     private NetworkStream? _stream;
     private readonly SemaphoreSlim _gate = new(1, 1);   // 半双工：请求-应答严格串行
+    // 连接状态变更串行化（与 ModbusTcpDriver 同因：采集循环/Dispose 并发竞态）
+    private readonly SemaphoreSlim _connectLock = new(1, 1);
+    // 请求-应答传输层超时：半开连接时 ReadAsync 会无限挂起，采集循环静默停产（5.8）
+    private const int SocketTimeoutMs = 3000;
 
     private readonly string _host;
     private readonly int _port;
@@ -40,34 +44,54 @@ public sealed class Mc3eDriver : IDeviceDriver
     public DriverDescriptor Describe() =>
         new(DriverId, "Mitsubishi MC 3E", SupportsWrite: false, MaxBatchPerRequest: 192);
 
+    public bool IsConnected => _tcpClient?.Connected == true;
+
     public async Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
     {
-        if (_tcpClient?.Connected == true)
-        {
-            return new ConnectResult(true, null);
-        }
-
+        await _connectLock.WaitAsync(cancellationToken);
         try
         {
-            var client = new TcpClient();
-            await client.ConnectAsync(_host, _port, cancellationToken);
-            _tcpClient = client;
-            _stream = client.GetStream();
-            return new ConnectResult(true, null);
+            if (IsConnected)
+            {
+                return new ConnectResult(true, null);
+            }
+
+            try
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(_host, _port, cancellationToken);
+                client.SendTimeout = SocketTimeoutMs;
+                client.ReceiveTimeout = SocketTimeoutMs;
+                _tcpClient = client;
+                _stream = client.GetStream();
+                return new ConnectResult(true, null);
+            }
+            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException)
+            {
+                return new ConnectResult(false, ex.Message);
+            }
         }
-        catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException)
+        finally
         {
-            return new ConnectResult(false, ex.Message);
+            _connectLock.Release();
         }
     }
 
     public async Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        _stream?.Dispose();
-        _stream = null;
-        _tcpClient?.Dispose();
-        _tcpClient = null;
-        await Task.CompletedTask;
+        await _connectLock.WaitAsync(cancellationToken);
+        try
+        {
+            _stream?.Dispose();
+            _stream = null;
+            _tcpClient?.Dispose();
+            _tcpClient = null;
+            await Task.CompletedTask;
+        }
+        finally
+        {
+            _connectLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<ReadValue>> ReadAsync(
@@ -294,5 +318,6 @@ public sealed class Mc3eDriver : IDeviceDriver
     {
         await DisconnectAsync();
         _gate.Dispose();
+        _connectLock.Dispose();
     }
 }

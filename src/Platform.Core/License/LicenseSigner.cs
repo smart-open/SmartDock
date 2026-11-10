@@ -24,10 +24,11 @@ public static class LicenseSigner
                 payload, Convert.FromBase64String(document.Signature),
                 HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         }
-        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        catch (Exception ex) when (ex is FormatException or ArgumentException or CryptographicException)
         {
             // 非法/缺失 base64（ArgumentNullException 属 ArgumentException）= 签名被破坏或缺失，
-            // 按验签失败处理（13.6.2 拒绝路径一致），不让构造异常冒泡成 500
+            // 合法 base64 但长度与密钥模长不符 = CryptographicException（最常见的文件截断形态）。
+            // 统一按验签失败处理（13.6.2 拒绝路径一致），不让构造异常冒泡成 500
             return false;
         }
     }

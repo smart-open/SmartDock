@@ -12,6 +12,7 @@ public partial class AlarmsPage : UserControl
 {
     private readonly AlarmApiClient _apiClient;
     private readonly long _operatorId;
+    private int _refreshing;   // 防重入：连点刷新/切过滤时后发先至会让表格与过滤条件错位
 
     public AlarmsPage(string baseAddress, long operatorId)
     {
@@ -26,6 +27,11 @@ public partial class AlarmsPage : UserControl
 
     private async Task RefreshAsync()
     {
+        if (System.Threading.Interlocked.Exchange(ref _refreshing, 1) == 1)
+        {
+            return;
+        }
+
         try
         {
             var activeOnly = ActiveOnlyCheck.IsChecked == true;
@@ -37,6 +43,10 @@ public partial class AlarmsPage : UserControl
         catch (Exception ex)
         {
             ErrorText.Text = $"刷新失败：{ex.Message}";
+        }
+        finally
+        {
+            System.Threading.Volatile.Write(ref _refreshing, 0);
         }
     }
 

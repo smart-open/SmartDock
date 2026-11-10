@@ -126,7 +126,8 @@ public class FeatureGateTests
         store = StoreWith(Def("x2", editionMin: "pro"));
         var state = Gate(store, edition: "basic").Get("x2");
         Assert.False(state.Enabled);
-        Assert.Equal("LICENSE_EXPIRED", state.Reason);
+        // reason 细分后统一报 LICENSE_EXPIRED 误导排障（审查修复项）：发行版不足 = LICENSE_EDITION
+        Assert.Equal("LICENSE_EDITION", state.Reason);
 
         // 插件缺失（requires_plugin 且未就绪）
         store = StoreWith(Def("x3", requiresPlugin: true));
@@ -251,6 +252,19 @@ public class FeatureGateTests
         var plan = await Planner(store).PlanAsync(AdminChange("security.auditChain", false, "省资源"));
         Assert.False(plan.Allowed);
         Assert.Contains(plan.Errors, e => e.Contains("always_on"));
+    }
+
+    [Fact]
+    public async Task Planner_rejects_disabling_required_dependency()
+    {
+        // 反向依赖（审查修复项）：关掉被依赖的 acq.core 会留下「alarm.engine 名义开启、
+        // 依赖已断」的隐性不一致——保存时就拒绝
+        var store = StoreWith(
+            Def("acq.core", defaultEnabled: true),
+            Def("alarm.engine", defaultEnabled: true, requires: ["acq.core"]));
+        var plan = await Planner(store).PlanAsync(AdminChange("acq.core", false, "维护"));
+        Assert.False(plan.Allowed);
+        Assert.Contains(plan.Errors, e => e.Contains("alarm.engine"));
     }
 
     [Fact]

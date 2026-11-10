@@ -27,6 +27,9 @@ public interface ILicenseService
     string Edition { get; }
 
     bool Allows(FeatureDefinition flag);
+
+    /// <summary>Allows=false 时的原因（2.7.4 错误码必须能区分假的原因）。</summary>
+    string DenyReason(FeatureDefinition flag);
 }
 
 /// <summary>插件就绪判定接缝：requires_plugin 的能力必须有插件承载。</summary>
@@ -52,6 +55,8 @@ public sealed class DefaultLicenseService : ILicenseService
         var required = EditionRank.GetValueOrDefault(flag.EditionMin, 0);
         return current >= required;
     }
+
+    public string DenyReason(FeatureDefinition flag) => "LICENSE_EDITION";
 }
 
 public sealed class DefaultPluginReadiness : IPluginReadiness
@@ -97,9 +102,10 @@ public sealed class FeatureGate : IFeatureGate
         var licensed = _license.Allows(flag);
         var pluginReady = !flag.RequiresPlugin || _plugins.IsReady(key);
 
-        // reason 三分：开关关 / 没买 / 插件缺——错误码必须能区分三种假（2.7.4）
+        // reason 细分：开关关 / 许可细分（发行版不足 vs 未列入清单 vs 授权无效）/ 插件缺——
+        // 错误码必须能区分每种假（2.7.4），统一报 LICENSE_EXPIRED 会误导现场排障
         var reason = !flagOn ? "DISABLED_BY_FLAG"
-            : !licensed ? "LICENSE_EXPIRED"
+            : !licensed ? _license.DenyReason(flag)
             : !pluginReady ? "PLUGIN_BLOCKED"
             : "OK";
 
@@ -159,8 +165,19 @@ public sealed class FeatureGate : IFeatureGate
                 return cached.Definitions;
             }
 
+            // 版本竞态：若「读版本→回源」之间发生写提交，旧定义会挂上新版本号，
+            // 版本失效机制随之失效（旧定义最长滞留 30s）。
+            // 正确序：先读版本 → 回源 → 复核版本；不一致说明回源期间有写提交，
+            // 定义可能新旧混合——本次不缓存（下次调用重新回源），退回 TTL 兜底
+            var versionBefore = _store.GetVersion();
             var definitions = _store.GetAllDefinitions();
-            _cache = (_store.GetVersion(), now, definitions);
+            var versionAfter = _store.GetVersion();
+            if (versionBefore != versionAfter)
+            {
+                return definitions;
+            }
+
+            _cache = (versionAfter, now, definitions);
             return definitions;
         }
     }

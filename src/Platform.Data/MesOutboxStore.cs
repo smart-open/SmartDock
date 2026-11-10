@@ -119,7 +119,7 @@ public sealed class MesOutboxStore : IMesOutboxStore
         await using var command = new NpgsqlCommand("""
             UPDATE mes_outbox
             SET status = @status,
-                last_error = @error,
+                last_error = COALESCE(@error, last_error),
                 ack_value = COALESCE(@ack_value, ack_value),
                 next_at = CASE WHEN @delay::int IS NULL THEN next_at ELSE now() + make_interval(secs => @delay::int) END,
                 attempts = CASE WHEN @reset THEN 0 ELSE attempts END,

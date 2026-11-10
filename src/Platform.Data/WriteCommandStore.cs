@@ -50,8 +50,18 @@ public sealed class WriteCommandStore
     private async Task UpdateAsync(long commandId, string status, string? rejectReason = null,
         string? error = null, double? readBackValue = null, CancellationToken cancellationToken = default)
     {
+        // 状态机守卫：终态只能从合法前态进入（DONE→SENT 等乱序覆盖一律拒绝）。
+        // 守卫不命中（已是终态）静默跳过——WriteGuard 异常兜底可能对同一命令补写 FAILED
+        var allowedFrom = status switch
+        {
+            "SENT" => "('PENDING')",
+            "DONE" or "FAILED" => "('PENDING','SENT')",
+            "REJECTED" => "('PENDING','SENT')",
+            _ => throw new InvalidOperationException($"unknown write_command status: {status}"),
+        };
+
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand("""
+        await using var command = new NpgsqlCommand($"""
             UPDATE write_command
             SET status = @status,
                 reject_reason = COALESCE(@reject_reason, reject_reason),
@@ -59,7 +69,7 @@ public sealed class WriteCommandStore
                 value_readback = @read_back_value,
                 sent_at = CASE WHEN @status = 'SENT' THEN now() ELSE sent_at END,
                 finished_at = CASE WHEN @status IN ('DONE', 'FAILED', 'REJECTED') THEN now() ELSE finished_at END
-            WHERE id = @id
+            WHERE id = @id AND status IN {allowedFrom}
             """, connection);
         command.Parameters.AddWithValue("id", commandId);
         command.Parameters.AddWithValue("status", status);

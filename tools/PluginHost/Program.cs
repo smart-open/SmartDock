@@ -48,7 +48,9 @@ public sealed class EchoDriver : IDeviceWriteDriver, IDeviceEventSource
     private readonly System.Threading.Channels.Channel<DeviceEvent> _events =
         System.Threading.Channels.Channel.CreateUnbounded<DeviceEvent>();
 
-    private readonly Dictionary<long, double> _lastWritten = new();
+    // gRPC 每调用独立线程：并发 Write RPC 会并发写普通 Dictionary（M1-10 同款桶损坏），
+    // 必须用并发容器
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, double> _lastWritten = new();
 
     /// <summary>事件流（RemoteDriverService.Subscribe 经此转发；unbounded 通道骨架期无背压需求）。</summary>
     public async IAsyncEnumerable<DeviceEvent> SubscribeAsync(
@@ -64,6 +66,8 @@ public sealed class EchoDriver : IDeviceWriteDriver, IDeviceEventSource
 
     public DriverDescriptor Describe() =>
         new(DriverIdValue, "Echo (in-process skeleton)", SupportsWrite: true, MaxBatchPerRequest: 120);
+
+    public bool IsConnected => true;   // 虚拟驱动：永远在线
 
     public Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
     {

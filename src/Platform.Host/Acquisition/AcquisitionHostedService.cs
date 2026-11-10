@@ -11,17 +11,20 @@ namespace Platform.Host.Acquisition;
 public sealed class AcquisitionHostedService : IHostedService
 {
     private readonly PollingScheduler _scheduler;
+    private readonly AcquisitionPipeline _pipeline;
     private readonly DeviceRegistryStore _registryStore;
     private readonly AlarmStore _alarmStore;
     private readonly ILogger<AcquisitionHostedService> _logger;
 
     public AcquisitionHostedService(
         PollingScheduler scheduler,
+        AcquisitionPipeline pipeline,
         DeviceRegistryStore registryStore,
         AlarmStore alarmStore,
         ILogger<AcquisitionHostedService> logger)
     {
         _scheduler = scheduler;
+        _pipeline = pipeline;
         _registryStore = registryStore;
         _alarmStore = alarmStore;
         _logger = logger;
@@ -65,5 +68,11 @@ public sealed class AcquisitionHostedService : IHostedService
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
-        => await _scheduler.DisposeAsync();
+    {
+        // 停机顺序：先停调度器（不再产生新数据）→ 再排空流水线（队列残余 + 攒批中
+        // 的批次落库，带有限重试）。原实现只停调度器，队列里最多 2048+500 个值进程
+        // 退出即丢，违背 2.6A「不可丢」
+        await _scheduler.DisposeAsync();
+        await _pipeline.DisposeAsync();
+    }
 }

@@ -10,6 +10,7 @@ public class DriverRegistryTests
     private sealed class StubDriver : IDeviceDriver
     {
         public DriverDescriptor Describe() => new("driver.stub", "Stub", false, 1);
+        public bool IsConnected => true;
         public Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(new ConnectResult(true, null));
         public Task DisconnectAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

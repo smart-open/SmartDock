@@ -27,6 +27,8 @@ public sealed class RemoteDriverProxy : IDeviceWriteDriver
     public DriverDescriptor Describe() =>
         new(DriverIdValue, "remote (out-of-process)", SupportsWrite: true, MaxBatchPerRequest: 120);
 
+    public bool IsConnected => _supervisor.State == RemoteHostState.Running;
+
     public Task DisconnectAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public async Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
@@ -45,6 +47,12 @@ public sealed class RemoteDriverProxy : IDeviceWriteDriver
         catch (RpcException ex)
         {
             return new ConnectResult(false, $"remote host unreachable: {ex.Status.StatusCode}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 宿主被 kill 后 spawn 前的窗口：Client getter 抛「not running」，
+            // 与 RPC 失败同语义归一为连接失败（5.12.3：异常不外抛）
+            return new ConnectResult(false, $"remote host not running: {ex.Message}");
         }
     }
 
@@ -73,7 +81,10 @@ public sealed class RemoteDriverProxy : IDeviceWriteDriver
             {
                 var dto = reply.Values[i];
                 values[i] = new ReadValue(
-                    dto.PointId, dto.DeviceId, dto.Value,
+                    dto.PointId, dto.DeviceId,
+                    // Bad 值保持 null（本地驱动同口径）：proto 用 optional 表达「无值」，
+                    // 否则远程链路的 Bad 落库 0.0、本地落 null，快照口径分裂
+                    dto.HasValue ? dto.Value : null,
                     (QualityCode)dto.Quality,
                     DateTimeOffset.FromUnixTimeMilliseconds(dto.TimestampUnixMs).UtcDateTime);
             }
@@ -88,6 +99,12 @@ public sealed class RemoteDriverProxy : IDeviceWriteDriver
         {
             // 宿主僵死/重启窗口：全部 Bad（5.7 质量码只描述真实结果）。
             // 下轮心跳触发监管器重启，不在此重试（避免读写双路并发重启逻辑）
+            var now = DateTime.UtcNow;
+            return points.Select(p => new ReadValue(
+                p.PointId, p.DeviceId, null, QualityCode.Bad, now)).ToArray();
+        }
+        catch (InvalidOperationException)
+        {
             var now = DateTime.UtcNow;
             return points.Select(p => new ReadValue(
                 p.PointId, p.DeviceId, null, QualityCode.Bad, now)).ToArray();
@@ -146,13 +163,27 @@ public sealed class RemoteDriverProxy : IDeviceWriteDriver
             var reason = $"remote host unreachable: {ex.Status.StatusCode}";
             return writes.Select(w => new WriteResult(false, reason)).ToArray();
         }
+        catch (InvalidOperationException ex)
+        {
+            var reason = $"remote host not running: {ex.Message}";
+            return writes.Select(w => new WriteResult(false, reason)).ToArray();
+        }
     }
 
     public async IAsyncEnumerable<DeviceEvent> SubscribeAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var call = _supervisor.Client.Subscribe(
-            new SubscribeRequest(), cancellationToken: cancellationToken);
+        Grpc.Core.AsyncServerStreamingCall<DeviceEventDto>? call;
+        try
+        {
+            call = _supervisor.Client.Subscribe(
+                new SubscribeRequest(), cancellationToken: cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            yield break;   // 宿主不在运行：事件流视为结束（订阅方随后可重试）
+        }
+
         var stream = call.ResponseStream;
         while (true)
         {

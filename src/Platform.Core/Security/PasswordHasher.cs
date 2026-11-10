@@ -21,15 +21,24 @@ public static class PasswordHasher
 
     public static bool Verify(string password, string stored)
     {
-        var parts = stored.Split('.');
-        if (parts.Length != 3 || !int.TryParse(parts[0], out var iterations))
+        try
         {
-            return false;   // 格式不符按验证失败处理，不抛（登录失败统一口径防枚举）
-        }
+            var parts = stored.Split('.');
+            if (parts.Length != 3 || !int.TryParse(parts[0], out var iterations))
+            {
+                return false;   // 格式不符按验证失败处理，不抛（登录失败统一口径防枚举）
+            }
 
-        var salt = Convert.FromHexString(parts[1]);
-        var expected = Convert.FromHexString(parts[2]);
-        var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
-        return CryptographicOperations.FixedTimeEquals(actual, expected);   // 恒时比较防时序侧信道
+            var salt = Convert.FromHexString(parts[1]);
+            var expected = Convert.FromHexString(parts[2]);
+            var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
+            return CryptographicOperations.FixedTimeEquals(actual, expected);   // 恒时比较防时序侧信道
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentOutOfRangeException or OverflowException)
+        {
+            // 哈希字段损坏（迁移脏数据/非 hex 内容/段超长）：按验证失败处理而非 500，
+            // 否则登录端点对特定账号必然异常，破坏「统一失败口径防枚举」
+            return false;
+        }
     }
 }

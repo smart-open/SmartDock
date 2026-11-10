@@ -13,6 +13,7 @@ public class WriteGuardTests
         public double? LastWrittenValue { get; private set; }
 
         public DriverDescriptor Describe() => new("test.write", "Write", true, 10);
+        public bool IsConnected => true;
         public Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(new ConnectResult(true, null));
         public Task DisconnectAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -72,7 +73,7 @@ public class WriteGuardTests
             pointResolver: pointId => pointId == 42
                 ? new PointRef(42, 1, "p1", "40001:Float32:CDAB", "Float32")
                 : null,
-            persistAsync: (pointId, value) => store.InsertPendingAsync(pointId, value, "op"),
+            persistAsync: (pointId, value, operatorId) => store.InsertPendingAsync(pointId, value, operatorId),
             markRejectedAsync: (id, reason) => store.MarkRejectedAsync(id, reason),
             markSentAsync: id => store.MarkSentAsync(id),
             finishAsync: (id, error, verified, readBack) => store.FinishAsync(id, error, verified, readBack),

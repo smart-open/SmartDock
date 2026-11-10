@@ -75,6 +75,22 @@ public sealed class FeatureChangePlanner(FeatureGate gate, IFeatureStore store, 
             }
         }
 
+        // 步骤 2 反向（关闭时）：被依赖能力不能关——关掉 acq.core 后 alarm.engine
+        // 仍报 Enabled=true（读取侧不重算依赖闭包），变成「名义开启、依赖已断」的隐性不一致。
+        // 3.7.4「破坏依赖的变更在保存时就被拒绝」同样约束关闭方向
+        if (!change.Enabled)
+        {
+            var dependents = gate.GetAllDefinitions().Values
+                .Where(other => other.Key != change.Key && other.Requires.Contains(change.Key, StringComparer.Ordinal))
+                .Where(other => gate.Get(other.Key).FlagOn)
+                .Select(other => other.Key)
+                .ToList();
+            if (dependents.Count > 0)
+            {
+                return PlanResult.Reject($"能力 {change.Key} 被已开启能力依赖，请先关闭：{string.Join(",", dependents)}");
+            }
+        }
+
         // 步骤 3（开启时）：互斥键必须全关（ui.designer 与 ui.mimic 二选一）
         if (change.Enabled && definition.Conflicts.Count > 0)
         {

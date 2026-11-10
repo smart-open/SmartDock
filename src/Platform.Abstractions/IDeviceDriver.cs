@@ -10,6 +10,13 @@ public interface IDeviceDriver : IAsyncDisposable
     DriverDescriptor Describe();
 
     /// <summary>
+    /// 当前传输层连接状态（观测面）：true = TCP 会话健在。
+    /// 调度器用它区分「通信故障」（连接已断 → 报离线 + 重连）与「配置错误」
+    /// （连接健在但地址解析失败全 Bad → 只报点位 Bad，不做离线翻转，避免报警振荡）。
+    /// </summary>
+    bool IsConnected { get; }
+
+    /// <summary>
     /// 建立连接。幂等：已连接直接返回成功；失败不抛异常，返回结果对象。
     /// </summary>
     Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default);

@@ -258,9 +258,42 @@ public sealed class RemoteDriverSupervisor : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            State = RemoteHostState.Stopped;
+            // 留在 Restarting 态继续退避重试：Stopped + 无人拉起 = 远程设备永久失联，
+            // 监视循环已随 KillProcessAsync 取消，只有这里能再拉起（4.8.1 重启语义）
+            State = RemoteHostState.Restarting;
             LastError = ex.Message;
             _logger.LogError(ex, "remote driver host restart failed");
+            await RestartRetryLoopAsync();
+        }
+    }
+
+    /// <summary>
+    /// 重启失败后的兜底循环：按退避表持续重试拉起（与 3.2 失败策略同一口径），
+    /// 直到成功或进程退出。退避封顶 30s，避免坏 exe 疯狂刷日志。
+    /// </summary>
+    private async Task RestartRetryLoopAsync()
+    {
+        while (State == RemoteHostState.Restarting)
+        {
+            var backoff = RestartBackoffs[Math.Min(_crashCount, RestartBackoffs.Length - 1)];
+            _crashCount++;
+            _logger.LogWarning("remote driver host restart retry #{Count} in {Backoff}", _crashCount, backoff);
+            await Task.Delay(backoff);
+            try
+            {
+                await SpawnAsync(CancellationToken.None);
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                StartMonitor();
+                State = RemoteHostState.Running;
+                _logger.LogInformation("remote driver host recovered on port {Port} (pid {Pid})",
+                    Port, _process?.Id);
+                return;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                _logger.LogError(ex, "remote driver host restart retry failed");
+            }
         }
     }
 
@@ -286,6 +319,9 @@ public sealed class RemoteDriverSupervisor : IAsyncDisposable
         _channel?.Dispose();
         _channel = null;
         _client = null;
+        // Process 句柄必须释放：反复崩溃重启时旧对象只靠 finalizer 回收会累积句柄泄漏
+        _process?.Dispose();
+        _process = null;
     }
 
     /// <summary>取远程驱动代理（PollingScheduler 当普通 IDeviceDriver 用，传输透明）。</summary>

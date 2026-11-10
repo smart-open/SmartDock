@@ -20,6 +20,26 @@ public static class ReportEndpoints
     {
         var group = app.MapGroup("/api/reports");
 
+        // 防线 1（文件头注释一直宣称但原实现缺失）：报表功能权限。
+        // def.PermCode 原来从未被使用——任何用户无需报表权限码即可查询/导出
+        async Task<IResult?> CheckPermAsync(string reportCode, ReportDef def,
+            IUserScopeStore scopeStore, HttpContext context, CancellationToken cancellationToken)
+        {
+            var operatorId = OperatorContext.ParseOperator(context);
+            if (operatorId is null)
+            {
+                return Results.Json(new { error = "X-Operator header required" }, statusCode: 401);
+            }
+
+            var permissions = await scopeStore.GetPermissionsAsync(operatorId.Value, cancellationToken);
+            if (!permissions.Contains(def.PermCode, StringComparer.Ordinal))
+            {
+                return Results.Json(new { error = $"missing permission: {def.PermCode}" }, statusCode: 403);
+            }
+
+            return null;
+        }
+
         // 报表清单（页面下拉）
         group.MapGet("/", async (ReportStore store, CancellationToken cancellationToken) =>
         {
@@ -37,6 +57,11 @@ public static class ReportEndpoints
             if (def is null)
             {
                 return Results.NotFound(new { error = $"report not found or disabled: {reportCode}" });
+            }
+
+            if (await CheckPermAsync(reportCode, def, scopeStore, context, cancellationToken) is { } denied)
+            {
+                return denied;
             }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -84,6 +109,11 @@ public static class ReportEndpoints
                 return Results.NotFound(new { error = $"report not found or disabled: {reportCode}" });
             }
 
+            if (await CheckPermAsync(reportCode, def, scopeStore, context, cancellationToken) is { } denied)
+            {
+                return denied;
+            }
+
             try
             {
                 var allowedTables = await store.GetAllowedTablesAsync(cancellationToken);
@@ -113,6 +143,11 @@ public static class ReportEndpoints
             }
             catch (ReportCompileException ex)
             {
+                // 编译拒绝与查询通道同一留痕口径：导出旁路的拒绝不留痕 = 安全信号丢失
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await store.WriteRunAsync(reportCode, JsonSerializer.Serialize(request.Params, JsonOptions),
+                    userId: OperatorContext.ParseOperator(context), 0, sw.ElapsedMilliseconds,
+                    success: false, ex.Message, cancellationToken);
                 return Results.BadRequest(new { error = ex.Message });
             }
         });
