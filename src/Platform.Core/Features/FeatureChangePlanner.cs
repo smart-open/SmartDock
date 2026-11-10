@@ -1,13 +1,18 @@
 // 02 §3.7.4 开关变更 Planner：任何越权或破坏依赖的变更在保存时就被拒绝，
-// 而不是改完库再祈祷运行时忍一下。M3 阶段实现步骤 0/2/3/4/6；步骤 1（数据权限）
-// 随 RBAC scope 扩展补全（当前由端点权限码把守）；步骤 5 采「允许保存但状态
+// 而不是改完库再祈祷运行时忍一下。步骤 0/1/2/3/4/6 全实现：步骤 1（数据权限）
+// 由操作人权限码 + sys_user_scope 判定——M3 变更落 global/'*'，仅持 all 范围的
+// 操作人可改（越厂改开关的入口在范围收窄后自然关死）；步骤 5 采「允许保存但状态
 // Blocked」备选（3.7.4 表：提示先装插件；或允许保存但状态 Blocked）。
 
 using Platform.Abstractions.Features;
+using Platform.Core.Security;
 
 namespace Platform.Core.Features;
 
-public sealed record FeatureChange(string Key, bool Enabled, string Reason, string? TicketNo, long UpdatedBy);
+public sealed record FeatureChange(
+    string Key, bool Enabled, string Reason, string? TicketNo, long UpdatedBy,
+    IReadOnlyList<string> OperatorPermissions,
+    IReadOnlyList<UserScope> OperatorScopes);
 
 public sealed record PlanResult(
     bool Allowed,
@@ -29,6 +34,18 @@ public sealed class FeatureChangePlanner(FeatureGate gate, IFeatureStore store, 
         if (definition is null)
         {
             return PlanResult.Reject($"未定义的能力键：{change.Key}");
+        }
+
+        // 步骤 1：操作人权限 + 数据范围（3.7.4 表：403；不允许越厂改开关）
+        // 权限码在前（功能面），范围在后（数据面）——M3 变更写 global/'*'，
+        // 只有 all 范围的操作人有权做全局变更
+        if (!change.OperatorPermissions.Contains("platform:feature:write", StringComparer.Ordinal))
+        {
+            return PlanResult.Reject("缺少权限 platform:feature:write");
+        }
+        if (!change.OperatorScopes.Any(scope => scope.ScopeType == "all"))
+        {
+            return PlanResult.Reject("数据范围不含全局（all），不允许变更全局能力开关");
         }
 
         // 步骤 0：安全底线不可关（G1/G4 always_on 不提供关闭入口）

@@ -22,6 +22,14 @@ public interface IFeatureStore
     /// <summary>查互斥/依赖键的当前生效值（Planner 步骤 2/3 用）。</summary>
     Task<IReadOnlyDictionary<string, bool>> ResolveKeysAsync(
         IEnumerable<string> keys, CancellationToken cancellationToken = default);
+
+    /// <summary>批量覆盖（3.7.5 batch）：一个事务落全部变更，版本号只推进一次。</summary>
+    Task SaveScopeOverridesAsync(
+        IReadOnlyList<(string Key, bool Enabled, string Reason, string? TicketNo)> changes,
+        long updatedBy, CancellationToken cancellationToken = default);
+
+    /// <summary>回滚（3.7.5）：删该键最近一条覆盖（恢复默认值）并推进版本号；无覆盖返回 false。</summary>
+    Task<bool> DeleteLastScopeOverrideAsync(string key, long updatedBy, CancellationToken cancellationToken = default);
 }
 
 public sealed class FeatureStore : IFeatureStore
@@ -131,6 +139,69 @@ public sealed class FeatureStore : IFeatureStore
 
         await Task.CompletedTask;
         return result;
+    }
+
+    public async Task SaveScopeOverridesAsync(
+        IReadOnlyList<(string Key, bool Enabled, string Reason, string? TicketNo)> changes,
+        long updatedBy, CancellationToken cancellationToken = default)
+    {
+        // 批量变更与版本推进同事务：全部成功或全部不落（3.7.4「批量变更生成一个 change_id」
+        // 的 M3 简化——同一批共享 reason/ticket，回滚按键撤销）
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var (key, enabled, reason, ticketNo) in changes)
+        {
+            await using var insert = new NpgsqlCommand(
+                """
+                INSERT INTO feature_scope (flag_key, scope_type, scope_id, enabled, reason, ticket_no, updated_by)
+                VALUES (@key, 'global', '*', @enabled, @reason, @ticket_no, @updated_by)
+                """, connection, transaction);
+            insert.Parameters.AddWithValue("key", key);
+            insert.Parameters.AddWithValue("enabled", enabled);
+            insert.Parameters.AddWithValue("reason", reason);
+            insert.Parameters.AddWithValue("ticket_no", (object?)ticketNo ?? DBNull.Value);
+            insert.Parameters.AddWithValue("updated_by", updatedBy);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var bump = new NpgsqlCommand(
+            "UPDATE feature_version SET version = version + 1, updated_at = now() WHERE id = 1",
+            connection, transaction);
+        await bump.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<bool> DeleteLastScopeOverrideAsync(string key, long updatedBy, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        // 取最新一条覆盖的 id 再删：回滚 = 撤销最近一次变更、恢复默认生效值
+        await using var select = new NpgsqlCommand(
+            """
+            SELECT id FROM feature_scope
+            WHERE flag_key = @key AND scope_type = 'global' AND scope_id = '*'
+            ORDER BY id DESC LIMIT 1
+            """, connection, transaction);
+        select.Parameters.AddWithValue("key", key);
+        var lastId = await select.ExecuteScalarAsync(cancellationToken);
+        if (lastId is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        await using var delete = new NpgsqlCommand(
+            "DELETE FROM feature_scope WHERE id = @id", connection, transaction);
+        delete.Parameters.AddWithValue("id", (long)lastId);
+        await delete.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var bump = new NpgsqlCommand(
+            "UPDATE feature_version SET version = version + 1, updated_at = now() WHERE id = 1",
+            connection, transaction);
+        await bump.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 
     // text[] 列直接取 Npgsql 数组映射，避免手工 split

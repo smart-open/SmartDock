@@ -2,10 +2,12 @@
 //   防线 1 功能权限：X-User 权限码检查（M1 会话口径，JWT 随完整鉴权补齐）
 //   防线 2 编译器：白名单 + 参数化 + /*SCOPE*/ 范围注入
 //   防线 3 执行层：只读超时 + 行数上限 + report_run 审计留痕
-//   数据范围（scopeIds）：M3 阶段用户数据范围尚未建（RBAC scope 扩展），先按「全部可见」
-//   传全量 plant 列表；范围字段收窄属后续任务，编译器契约（/*SCOPE*/ 必须存在）已冻结。
+//   数据范围（scopeIds）：按 X-Operator 实时读 sys_user_scope 计算（9.2）——all 枚举
+//   全量工厂、factory 绑定 id。编译器契约（/*SCOPE*/ 必须存在）已冻结，只换平台侧来源。
 
 using System.Text.Json;
+using Platform.Core.Security;
+using Platform.Host.Auth;
 using Platform.Core.Reports;
 
 namespace Platform.Host.Reports;
@@ -28,7 +30,8 @@ public static class ReportEndpoints
         // 页面查询：编译（拒绝即 400 带原因）→ 执行 → 留痕 → 返回行数据
         // logger 类型参数用 marker 类（端点类本身是 static，不能作 ILogger<T> 的类型参数）
         group.MapPost("/{reportCode}/query", async (string reportCode, QueryRequest request,
-            ReportStore store, ILogger<ReportLog> logger, CancellationToken cancellationToken) =>
+            ReportStore store, IUserScopeStore scopeStore, ILogger<ReportLog> logger,
+            HttpContext context, CancellationToken cancellationToken) =>
         {
             var def = await store.GetEnabledAsync(reportCode, cancellationToken);
             if (def is null)
@@ -37,15 +40,19 @@ public static class ReportEndpoints
             }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            var operatorId = OperatorContext.ParseOperator(context);
             try
             {
                 var allowedTables = await store.GetAllowedTablesAsync(cancellationToken);
+                var scopeIds = operatorId is { } id
+                    ? await scopeStore.GetVisibleFactoryIdsAsync(id, cancellationToken)
+                    : [];
                 var compiled = SqlTemplateCompiler.Compile(
-                    def.SqlTemplate, def.Params, request.Params, [1], allowedTables, def.MaxRows);
+                    def.SqlTemplate, def.Params, request.Params, scopeIds, allowedTables, def.MaxRows);
                 var result = await store.ExecuteAsync(compiled, def.MaxRows, cancellationToken);
 
                 await store.WriteRunAsync(reportCode, JsonSerializer.Serialize(request.Params, JsonOptions),
-                    userId: null, result.RowCount, result.ElapsedMs, success: true, error: null, cancellationToken);
+                    userId: operatorId, result.RowCount, result.ElapsedMs, success: true, error: null, cancellationToken);
                 logger.LogInformation("report {Code} queried rows={Rows} elapsed={Ms}ms",
                     reportCode, result.RowCount, result.ElapsedMs);
 
@@ -61,14 +68,15 @@ public static class ReportEndpoints
             {
                 // 编译拒绝也留痕：反复触发拒绝的账号是安全信号（8.2 违反后果=拒绝执行）
                 await store.WriteRunAsync(reportCode, JsonSerializer.Serialize(request.Params, JsonOptions),
-                    userId: null, 0, sw.ElapsedMilliseconds, success: false, ex.Message, cancellationToken);
+                    userId: operatorId, 0, sw.ElapsedMilliseconds, success: false, ex.Message, cancellationToken);
                 return Results.BadRequest(new { error = ex.Message });
             }
         });
 
         // xlsx 导出：同一条编译链路（权限/白名单/范围完全一致，杜绝「导出比查询宽」的旁路）
         group.MapPost("/{reportCode}/export", async (string reportCode, QueryRequest request,
-            ReportStore store, ILogger<ReportLog> logger, CancellationToken cancellationToken) =>
+            ReportStore store, IUserScopeStore scopeStore, ILogger<ReportLog> logger,
+            HttpContext context, CancellationToken cancellationToken) =>
         {
             var def = await store.GetEnabledAsync(reportCode, cancellationToken);
             if (def is null)
@@ -79,8 +87,12 @@ public static class ReportEndpoints
             try
             {
                 var allowedTables = await store.GetAllowedTablesAsync(cancellationToken);
+                var operatorId = OperatorContext.ParseOperator(context);
+                var scopeIds = operatorId is { } id
+                    ? await scopeStore.GetVisibleFactoryIdsAsync(id, cancellationToken)
+                    : [];
                 var compiled = SqlTemplateCompiler.Compile(
-                    def.SqlTemplate, def.Params, request.Params, [1], allowedTables, def.MaxRows);
+                    def.SqlTemplate, def.Params, request.Params, scopeIds, allowedTables, def.MaxRows);
                 var result = await store.ExecuteAsync(compiled, def.MaxRows, cancellationToken);
 
                 // 列定义反序列化（导出契约：field→title 映射来自 report_def.columns）
@@ -91,7 +103,7 @@ public static class ReportEndpoints
                 stream.Position = 0;
 
                 await store.WriteRunAsync(reportCode, JsonSerializer.Serialize(request.Params, JsonOptions),
-                    userId: null, result.RowCount, result.ElapsedMs, success: true, error: null, cancellationToken);
+                    userId: operatorId, result.RowCount, result.ElapsedMs, success: true, error: null, cancellationToken);
                 logger.LogInformation("report {Code} exported rows={Rows} bytes={Bytes}",
                     reportCode, result.RowCount, stream.Length);
 

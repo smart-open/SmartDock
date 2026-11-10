@@ -16,6 +16,8 @@ using Platform.Core.License;
 using Platform.Core.Features;
 using Platform.Host.Alarms;
 using Platform.Core.Alarms;
+using Platform.Host.Identity;
+using Platform.Core.Security;
 
 // 单文件发布 + SCM 拉起时系统默认 CWD 是 C:\Windows\System32，
 // appsettings/插件目录解析会失败（S19 实测：CWD 不对 → 连接串读为 null）。
@@ -79,6 +81,26 @@ builder.Services.AddSingleton<Platform.Core.Features.ILicenseService>(sp =>
 builder.Services.AddSingleton(sp => (FileLicenseService)sp.GetRequiredService<Platform.Core.Features.ILicenseService>());
 builder.Services.AddSingleton<Platform.Core.Features.IPluginReadiness, Platform.Core.Features.DefaultPluginReadiness>();
 builder.Services.AddSingleton<Platform.Core.Features.FeatureChangePlanner>();
+// 用户数据范围（9.2）：报表 scopeIds 与 Planner 步骤 1 的平台侧唯一来源
+builder.Services.AddSingleton<IUserScopeStore, UserScopeStore>();
+// 授权闸（13.6.3）：超限软限 + 降级写闸；数量回调实时查库（存量不追溯）
+builder.Services.AddSingleton(sp =>
+{
+    var licenseService = sp.GetRequiredService<FileLicenseService>();
+    var dataSource = sp.GetRequiredService<Npgsql.NpgsqlDataSource>();
+    return new LicenseGuardService(
+        licenseService,
+        currentDeviceCount: () =>
+        {
+            using var command = dataSource.CreateCommand("SELECT COUNT(*) FROM device");
+            return Convert.ToInt32(command.ExecuteScalar());
+        },
+        currentUserCount: () =>
+        {
+            using var command = dataSource.CreateCommand("SELECT COUNT(*) FROM sys_user");
+            return Convert.ToInt32(command.ExecuteScalar());
+        });
+});
 
 var app = builder.Build();
 
@@ -99,6 +121,7 @@ app.MapReportEndpoints();
 app.MapFeatureEndpoints();
 app.MapLicenseEndpoints();
 app.MapAlarmEndpoints();
+app.MapIdentityEndpoints();
 app.MapControllers();
 
 app.Run();

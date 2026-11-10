@@ -50,6 +50,28 @@ public class FeatureGateTests
 
             return Task.FromResult<IReadOnlyDictionary<string, bool>>(result);
         }
+
+        public Task SaveScopeOverridesAsync(
+            IReadOnlyList<(string Key, bool Enabled, string Reason, string? TicketNo)> changes,
+            long updatedBy, CancellationToken cancellationToken = default)
+        {
+            foreach (var (key, enabled, _, _) in changes)
+            {
+                Overrides[(key, null)] = enabled;
+            }
+            Version++;
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> DeleteLastScopeOverrideAsync(string key, long updatedBy, CancellationToken cancellationToken = default)
+        {
+            var removed = Overrides.Remove((key, null));
+            if (removed)
+            {
+                Version++;
+            }
+            return Task.FromResult(removed);
+        }
     }
 
     private static FeatureDefinition Def(string key, bool defaultEnabled = true,
@@ -172,6 +194,12 @@ public class FeatureGateTests
     private static FeatureChangePlanner Planner(FakeStore store, string edition = "basic") =>
         new(Gate(store, edition), store, new DefaultLicenseService { Edition = edition });
 
+    // FeatureChange 构造 helper：默认操作人 = admin（全权限 + all 范围），聚焦步骤 0/2/3/4/6；
+    // 步骤 1（权限/范围拒绝）由专用用例显式构造受限操作人
+    private static FeatureChange AdminChange(string key, bool enabled, string reason = "测试", string? ticketNo = null) =>
+        new(key, enabled, reason, ticketNo, 1,
+            ["platform:feature:write"], [new Platform.Core.Security.UserScope("all", null)]);
+
     [Fact]
     public async Task Planner_rejects_enabling_when_dependency_off()
     {
@@ -179,7 +207,7 @@ public class FeatureGateTests
         var store = StoreWith(
             Def("report.fixed", defaultEnabled: false),
             Def("report.designer", defaultEnabled: false, requires: ["report.fixed"]));
-        var plan = await Planner(store).PlanAsync(new FeatureChange("report.designer", true, "试用", null, 1));
+        var plan = await Planner(store).PlanAsync(AdminChange("report.designer", true, "试用"));
         Assert.False(plan.Allowed);
         Assert.Contains(plan.Errors, e => e.Contains("report.fixed"));
     }
@@ -190,7 +218,7 @@ public class FeatureGateTests
         var store = StoreWith(
             Def("report.fixed", defaultEnabled: true),
             Def("report.designer", defaultEnabled: false, requires: ["report.fixed"]));
-        var plan = await Planner(store).PlanAsync(new FeatureChange("report.designer", true, "开", null, 1));
+        var plan = await Planner(store).PlanAsync(AdminChange("report.designer", true, "开"));
         Assert.True(plan.Allowed);
     }
 
@@ -201,7 +229,7 @@ public class FeatureGateTests
         var store = StoreWith(
             Def("ui.designer", defaultEnabled: false, conflicts: ["ui.mimic"]),
             Def("ui.mimic", defaultEnabled: true));
-        var plan = await Planner(store).PlanAsync(new FeatureChange("ui.designer", true, "换", null, 1));
+        var plan = await Planner(store).PlanAsync(AdminChange("ui.designer", true, "换"));
         Assert.False(plan.Allowed);
         Assert.Contains(plan.Errors, e => e.Contains("ui.mimic"));
     }
@@ -211,7 +239,7 @@ public class FeatureGateTests
     {
         // 开关≠授权：pro 能力在 basic 只能升级发行版，改开关无效
         var store = StoreWith(Def("fancy", defaultEnabled: false, editionMin: "pro"));
-        var plan = await Planner(store).PlanAsync(new FeatureChange("fancy", true, "想要", null, 1));
+        var plan = await Planner(store).PlanAsync(AdminChange("fancy", true, "想要"));
         Assert.False(plan.Allowed);
         Assert.Contains(plan.Errors, e => e.Contains("升级发行版"));
     }
@@ -220,7 +248,7 @@ public class FeatureGateTests
     public async Task Planner_rejects_disabling_always_on()
     {
         var store = StoreWith(Def("security.auditChain", alwaysOn: true));
-        var plan = await Planner(store).PlanAsync(new FeatureChange("security.auditChain", false, "省资源", null, 1));
+        var plan = await Planner(store).PlanAsync(AdminChange("security.auditChain", false, "省资源"));
         Assert.False(plan.Allowed);
         Assert.Contains(plan.Errors, e => e.Contains("always_on"));
     }
@@ -230,7 +258,7 @@ public class FeatureGateTests
     {
         // 当前已开再发「开」→ 允许但不产生新覆盖行（State 非 null 标记）
         var store = StoreWith(Def("on1", defaultEnabled: true));
-        var plan = await Planner(store).PlanAsync(new FeatureChange("on1", true, "重复", null, 1));
+        var plan = await Planner(store).PlanAsync(AdminChange("on1", true, "重复"));
         Assert.True(plan.Allowed);
         Assert.NotNull(plan.State);
     }
@@ -238,7 +266,31 @@ public class FeatureGateTests
     [Fact]
     public async Task Planner_rejects_unknown_key()
     {
-        var plan = await Planner(StoreWith()).PlanAsync(new FeatureChange("ghost", true, "?", null, 1));
+        var plan = await Planner(StoreWith()).PlanAsync(AdminChange("ghost", true, "?"));
         Assert.False(plan.Allowed);
+    }
+
+    [Fact]
+    public async Task Planner_rejects_without_feature_write_permission()
+    {
+        // 步骤 1a：无 platform:feature:write 权限 → 拒绝（功能面）
+        var store = StoreWith(Def("pilot2", defaultEnabled: false));
+        var change = new FeatureChange("pilot2", true, "越权", null, 1,
+            ["device:write"], [new Platform.Core.Security.UserScope("all", null)]);
+        var plan = await Planner(store).PlanAsync(change);
+        Assert.False(plan.Allowed);
+        Assert.Contains(plan.Errors, e => e.Contains("platform:feature:write"));
+    }
+
+    [Fact]
+    public async Task Planner_rejects_without_global_scope()
+    {
+        // 步骤 1b：仅工厂范围的操作人改全局开关 → 拒绝（数据面，9.2）
+        var store = StoreWith(Def("pilot3", defaultEnabled: false));
+        var change = new FeatureChange("pilot3", true, "越厂", null, 1,
+            ["platform:feature:write"], [new Platform.Core.Security.UserScope("factory", 1)]);
+        var plan = await Planner(store).PlanAsync(change);
+        Assert.False(plan.Allowed);
+        Assert.Contains(plan.Errors, e => e.Contains("all"));
     }
 }
