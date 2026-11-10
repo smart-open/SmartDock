@@ -82,7 +82,8 @@ public sealed class FeatureStore : IFeatureStore
               AND (effective_to IS NULL OR effective_to > now())
             ORDER BY CASE scope_type WHEN 'line' THEN 3 WHEN 'workshop' THEN 2
                                      WHEN 'factory' THEN 1 ELSE 0 END DESC,
-                     effective_from DESC NULLS LAST
+                     effective_from DESC NULLS LAST,
+                     id DESC
             LIMIT 1
             """);
         command.Parameters.AddWithValue("key", key);

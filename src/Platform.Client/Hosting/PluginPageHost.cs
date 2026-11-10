@@ -4,23 +4,24 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Platform.Abstractions.Plugins;
 
 namespace Platform.Client.Hosting;
 
 /// <summary>插件页提供者契约（客户端侧最小面；完整 IPluginUiProvider 随插件 UI 交付扩展）。</summary>
 public interface IPluginPageProvider
 {
-    /// <summary>导航显示名。</summary>
-    string Title { get; }
+    /// <summary>页声明（4.9 数据面）：路由/标题/能力要求——导航树据此生成与显隐。</summary>
+    PluginPageDescriptor Page { get; }
 
     /// <summary>在 UI 线程创建页面内容；实现方禁止阻塞 IO（4.9.1 插件侧义务）。</summary>
     UIElement CreateView();
 }
 
 /// <summary>委托式提供者：平台内置页与演示页用 lambda 挂进宿主，免为每页建类。</summary>
-public sealed class DelegatePageProvider(string title, Func<UIElement> createView) : IPluginPageProvider
+public sealed class DelegatePageProvider(PluginPageDescriptor page, Func<UIElement> createView) : IPluginPageProvider
 {
-    public string Title => title;
+    public PluginPageDescriptor Page => page;
 
     public UIElement CreateView() => createView();
 }
@@ -60,7 +61,7 @@ public sealed class PluginPageHost : ContentControl
         {
             if (SessionStates.TryGetValue(_pageKey, out var state) && state == PluginPageState.Disabled)
             {
-                Content = BuildErrorView(provider.Title,
+                Content = BuildErrorView(provider.Page.Title,
                     new InvalidOperationException("该页已在本会话禁用（先前崩溃），重启客户端恢复"));
                 return;
             }
@@ -80,7 +81,7 @@ public sealed class PluginPageHost : ContentControl
             {
                 SessionStates[_pageKey] = PluginPageState.Disabled;
             }
-            Content = BuildErrorView(provider.Title, ex);
+            Content = BuildErrorView(provider.Page.Title, ex);
         }
     }
 

@@ -21,8 +21,8 @@
             <Button x:Name="NavReportsButton" Content="报表" Height="36" Margin="8,4"
                     HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavReportsClick" />
             <Separator Margin="8,12" />
-            <Button x:Name="NavCrashDemoButton" Content="插件页（隔离演示）" Height="36" Margin="8,4"
-                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavCrashDemoClick" />
+            <!-- 插件导航区（4.9）：条目由插件页注册表生成，RequiresFeatures 未满足的页不出现 -->
+            <StackPanel x:Name="PluginNavPanel" />
         </StackPanel>
 
         <!-- 右侧内容区：两页共享一个 ContentControl，按导航切换 -->

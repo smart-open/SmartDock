@@ -21,6 +21,10 @@ public partial class App : Application
 
         var main = new MainWindow(baseAddress, login.Session);
         MainWindow = main;
+        // OnExplicitShutdown 模式下登录窗关闭不再误触发应用退出（模态窗关闭=「最后一个窗口」
+        // 关闭，默认 OnLastWindowClose 会把 main.Show() 吞掉——登录成功即闪退，S24 调试记录 2）；
+        // 代价是退出必须显式：主窗口关闭 = 会话结束
+        main.Closed += (_, _) => Shutdown();
         main.Show();
     }
 
