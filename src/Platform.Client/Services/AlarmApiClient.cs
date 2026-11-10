@@ -12,11 +12,7 @@ public sealed record AlarmDto(
 /// <summary>报警 API 客户端（C1 查询 + C3 确认；确认需要操作员 ID 头，与写指令同权口径）。</summary>
 public sealed class AlarmApiClient(string baseAddress)
 {
-    private readonly HttpClient _httpClient = new()
-    {
-        BaseAddress = new Uri(baseAddress),
-        Timeout = TimeSpan.FromSeconds(5),
-    };
+    private readonly HttpClient _httpClient = HttpClientHolder.Get(baseAddress, TimeSpan.FromSeconds(5));
 
     public async Task<IReadOnlyList<AlarmDto>> GetAlarmsAsync(bool active, CancellationToken cancellationToken = default)
     {

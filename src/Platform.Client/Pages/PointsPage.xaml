@@ -1,28 +1,98 @@
 <UserControl x:Class="Platform.Client.Pages.PointsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Platform.Client.Controls">
+    <!-- S03 点位实时监控：标题 + 汇总徽章 + 质量语义色表格 + 行内趋势 + 底部状态条 -->
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button x:Name="RefreshButton" Content="刷新快照" Padding="12,4" Click="OnRefreshClick" />
-            <TextBlock x:Name="StatusText" Margin="12,0,0,0" VerticalAlignment="Center" Text="就绪" />
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Width="3" Height="18" Background="{StaticResource AccentCyanBrush}"
+                        CornerRadius="1.5" Margin="0,0,8,0" VerticalAlignment="Center" />
+                <TextBlock Text="点位实时监控" Style="{StaticResource CardTitleText}" FontSize="15"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- 汇总徽章：全 Good 绿「全部正常 N/N」；有异常红「异常 N/N」（红只用于真实异常） -->
+            <Border Grid.Column="2" x:Name="SummaryBadge" Style="{StaticResource BadgeBorder}"
+                    Background="#123A171B" BorderBrush="{StaticResource StateGoodBrush}"
+                    VerticalAlignment="Center">
+                <TextBlock x:Name="SummaryBadgeText" Text="全部正常 --/--" Style="{StaticResource BadgeText}"
+                           Foreground="{StaticResource StateGoodBrush}" />
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="1" Style="{StaticResource CardBorder}" Padding="0">
+            <DataGrid x:Name="SnapshotGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                      CanUserAddRows="False" HeadersVisibility="Column" BorderThickness="0" AlternationCount="2"
+                      Background="Transparent" RowBackground="Transparent" AlternatingRowBackground="Transparent">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="点位" Binding="{Binding PointId}" Width="70"
+                                        ElementStyle="{StaticResource MonoTextElement}" />
+                    <DataGridTextColumn Header="数值" Binding="{Binding ValueText}" Width="120"
+                                        ElementStyle="{StaticResource MonoValueElement}" />
+                    <DataGridTemplateColumn Header="质量" Width="92">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="10,0,0,0">
+                                    <Ellipse Width="7" Height="7" Fill="{Binding QualityBrush}"
+                                             VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Text="{Binding QualityText}" FontSize="12"
+                                               Foreground="{Binding QualityBrush}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="时间(本地)" Binding="{Binding TimestampText}" Width="160"
+                                        ElementStyle="{StaticResource SecondaryTextElement}" />
+                    <DataGridTemplateColumn Header="趋势" Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <controls:Sparkline Values="{Binding Trend}" BadCount="{Binding BadCount}"
+                                                    SeriesBrush="{StaticResource AccentCyanBrush}"
+                                                    Margin="4,2" Height="22" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+                <DataGrid.RowStyle>
+                    <!-- 斑马行：panelAlt 底（密度 30px 行高口径） -->
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                        <Setter Property="Height" Value="30" />
+                        <Style.Triggers>
+                            <Trigger Property="AlternationIndex" Value="1">
+                                <Setter Property="Background" Value="{StaticResource BgPanelAltBrush}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+            </DataGrid>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+            <TextBlock x:Name="StatusText" Style="{StaticResource SecondaryText}" Text="就绪" />
+            <TextBlock x:Name="ErrorText" Foreground="{StaticResource StateBadBrush}" Margin="24,0,0,0"
+                       TextWrapping="Wrap" />
         </StackPanel>
 
-        <DataGrid Grid.Row="1" x:Name="SnapshotGrid" AutoGenerateColumns="False" IsReadOnly="True"
-                  CanUserAddRows="False" HeadersVisibility="Column">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="PointId" Binding="{Binding PointId}" Width="80" />
-                <DataGridTextColumn Header="值" Binding="{Binding ValueText}" Width="140" />
-                <DataGridTextColumn Header="质量" Binding="{Binding Quality}" Width="90" />
-                <DataGridTextColumn Header="时间(本地)" Binding="{Binding TimestampText}" Width="180" />
-            </DataGrid.Columns>
-        </DataGrid>
-
-        <TextBlock Grid.Row="2" x:Name="ErrorText" Foreground="Red" Margin="0,8,0,0" TextWrapping="Wrap" />
+        <!-- 底部状态条（点位实时监控图脚注口径）：采样周期 · 队列规模 · 刷新时刻 -->
+        <Border Grid.Row="3" Background="{StaticResource BgPanelBrush}"
+                BorderBrush="{StaticResource BorderSubtleBrush}" BorderThickness="0,1,0,0"
+                Padding="12,6" Margin="0,8,0,-12">
+            <TextBlock x:Name="FooterText" Style="{StaticResource SecondaryText}" FontSize="11"
+                       Text="采样 -- 秒 · 快照 -- 点" />
+        </Border>
     </Grid>
 </UserControl>

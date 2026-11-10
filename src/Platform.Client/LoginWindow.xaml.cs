@@ -10,13 +10,26 @@ using System.Windows.Input;
 public partial class LoginWindow : Window
 {
     private readonly Services.AuthApiClient _authClient;
+    private readonly Services.LicenseApiClient _licenseClient;
     private bool _loggingIn;
 
     public LoginWindow(string baseAddress)
     {
         InitializeComponent();
         _authClient = new Services.AuthApiClient(baseAddress);
+        _licenseClient = new Services.LicenseApiClient(baseAddress);
         UserCodeBox.Focus();
+        Loaded += (_, _) => _ = LoadLicenseFooterAsync();   // 脚注异步加载：授权面故障不许挡登录
+    }
+
+    /// <summary>脚注：v版本 · 发行版 · 授权至日期；许可未加载/接口失败降级为仅版本号（13.6）。</summary>
+    private async Task LoadLicenseFooterAsync()
+    {
+        var version = typeof(LoginWindow).Assembly.GetName().Version?.ToString(3) ?? "1.0";
+        var license = await _licenseClient.GetAsync();
+        FooterText.Text = license is { Loaded: true, Edition: not null }
+            ? $"v{version} · {license.Edition} 版 · 授权至 {license.ExpiresAt?.ToLocalTime():yyyy-MM-dd}"
+            : $"v{version} · 未加载授权文件";
     }
 
     /// <summary>登录成功后的会话（主窗口读角色/权限控制 UI）。</summary>

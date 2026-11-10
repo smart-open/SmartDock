@@ -10,11 +10,7 @@ public sealed record LoginOutcome(long UserId, string UserName, IReadOnlyList<st
 
 public sealed class AuthApiClient(string baseAddress)
 {
-    private readonly HttpClient _httpClient = new()
-    {
-        BaseAddress = new Uri(baseAddress),
-        Timeout = TimeSpan.FromSeconds(5),
-    };
+    private readonly HttpClient _httpClient = HttpClientHolder.Get(baseAddress, TimeSpan.FromSeconds(5));
 
     /// <summary>登录成功返回会话；失败返回 null（401/400 统一口径，客户端不区分原因防枚举展示）。</summary>
     public async Task<LoginOutcome?> LoginAsync(string userCode, string password, CancellationToken cancellationToken = default)

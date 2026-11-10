@@ -1,0 +1,115 @@
+<UserControl x:Class="Platform.Client.Pages.OverviewPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Platform.Client.Controls">
+    <!-- S01 总览：KPI 行 → 设备矩阵 + 报警流 → 趋势（中央监控总览图） -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="200" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- KPI 行：4 张等宽卡（数据全部来自真实接口，无假数据） -->
+        <UniformGrid Grid.Row="0" Columns="4" Margin="0,0,0,12">
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="启用设备" Style="{StaticResource SecondaryText}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,2">
+                        <TextBlock x:Name="KpiDevicesText" Text="--" Style="{StaticResource KpiValueText}" />
+                        <TextBlock x:Name="KpiDevicesTotalText" Text="/--" Style="{StaticResource SecondaryText}"
+                                   VerticalAlignment="Bottom" Margin="6,0,0,6" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="当前报警" Style="{StaticResource SecondaryText}" />
+                    <TextBlock x:Name="KpiAlarmsText" Text="--" Style="{StaticResource KpiValueText}"
+                               Margin="0,4,0,2" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="点位正常率" Style="{StaticResource SecondaryText}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,2">
+                        <TextBlock x:Name="KpiGoodText" Text="--" Style="{StaticResource KpiValueText}" />
+                        <TextBlock x:Name="KpiGoodTotalText" Text="/--" Style="{StaticResource SecondaryText}"
+                                   VerticalAlignment="Bottom" Margin="6,0,0,6" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <TextBlock Text="异常点位" Style="{StaticResource SecondaryText}" />
+                    <TextBlock x:Name="KpiBadText" Text="--" Style="{StaticResource KpiValueText}"
+                               Margin="0,4,0,2" />
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="7*" />
+                <ColumnDefinition Width="5*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 设备状态矩阵：小卡网格（启用=绿点 / 停用=灰点） -->
+            <Border Grid.Column="0" Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="设备状态矩阵" Style="{StaticResource CardTitleText}"
+                               Margin="0,0,0,8" />
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="DeviceCards" >
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- 实时报警流：等级色条 + 文案 + 时间 + 确认 -->
+            <Border Grid.Column="1" Style="{StaticResource CardBorder}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="实时报警流" Style="{StaticResource CardTitleText}"
+                               Margin="0,0,0,8" />
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="AlarmFeed" />
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- 近期点位正常数趋势（客户端采样：打开页面后逐步积累，不用假历史） -->
+        <Border Grid.Row="2" Style="{StaticResource CardBorder}" Margin="0,12,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="近期点位正常数趋势" Style="{StaticResource CardTitleText}"
+                           Margin="0,0,0,4" />
+                <controls:TrendChart Grid.Row="1" x:Name="GoodTrendChart"
+                                     SeriesBrush="{StaticResource AccentTechBrush}" />
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+            <TextBlock x:Name="StatusText" Style="{StaticResource SecondaryText}" />
+            <TextBlock x:Name="ErrorText" Foreground="{StaticResource StateBadBrush}"
+                       Margin="24,0,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+    </Grid>
+</UserControl>

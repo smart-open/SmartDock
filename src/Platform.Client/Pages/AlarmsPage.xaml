@@ -1,40 +1,107 @@
 <UserControl x:Class="Platform.Client.Pages.AlarmsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- S05 报警中心：标题 + 未确认横幅 + 等级语义色表格 + 确认操作（C1/C3） -->
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button x:Name="RefreshButton" Content="刷新" Padding="12,4" Click="OnRefreshClick" />
-            <CheckBox x:Name="ActiveOnlyCheck" Content="仅未清" IsChecked="True" Margin="12,0,0,0"
-                      VerticalAlignment="Center" Checked="OnFilterChanged" Unchecked="OnFilterChanged" />
-            <TextBlock x:Name="StatusText" Margin="16,0,0,0" VerticalAlignment="Center" Text="就绪" />
-        </StackPanel>
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
 
-        <!-- C3 确认页主视图：等级 3=严重(红) 2=警告(橙) 1=提示(灰)；未确认加粗 -->
-        <DataGrid Grid.Row="1" x:Name="AlarmGrid" AutoGenerateColumns="False" IsReadOnly="True"
-                  CanUserAddRows="False" HeadersVisibility="Column">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="等级" Binding="{Binding LevelText}" Width="70" />
-                <DataGridTextColumn Header="设备" Binding="{Binding DeviceId}" Width="70" />
-                <DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="140" />
-                <DataGridTextColumn Header="内容" Binding="{Binding Message}" Width="*" />
-                <DataGridTextColumn Header="触发时间" Binding="{Binding RaisedText}" Width="150" />
-                <DataGridTextColumn Header="确认状态" Binding="{Binding AckText}" Width="110" />
-            </DataGrid.Columns>
-        </DataGrid>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Width="3" Height="18" Background="{StaticResource AccentCyanBrush}"
+                        CornerRadius="1.5" Margin="0,0,8,0" VerticalAlignment="Center" />
+                <TextBlock Text="报警中心" Style="{StaticResource CardTitleText}" FontSize="15"
+                           VerticalAlignment="Center" />
+            </StackPanel>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="RefreshButton" Content="刷新" Padding="14,4" Click="OnRefreshClick" />
+                <CheckBox x:Name="ActiveOnlyCheck" Content="仅未清" IsChecked="True" Margin="12,0,0,0"
+                          VerticalAlignment="Center" Foreground="{StaticResource TextPrimaryBrush}"
+                          Checked="OnFilterChanged" Unchecked="OnFilterChanged" />
+                <TextBlock x:Name="StatusText" Margin="16,0,0,0" VerticalAlignment="Center"
+                           Style="{StaticResource SecondaryText}" Text="就绪" />
+            </StackPanel>
+        </Grid>
+
+        <!-- 未确认横幅：有未清报警才显示（红 12% 底 + 左缘红条，S05 安灯口径） -->
+        <Border Grid.Row="1" x:Name="UnackBanner" Background="#1F3A171B"
+                BorderBrush="{StaticResource StateBadBrush}" BorderThickness="1"
+                CornerRadius="4" Padding="12,7" Margin="0,0,0,8" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal">
+                <Border Width="3" Height="16" Background="{StaticResource StateBadBrush}"
+                        CornerRadius="1.5" Margin="0,0,10,0" VerticalAlignment="Center" />
+                <TextBlock x:Name="UnackBannerText" Text="0 条未确认"
+                           Foreground="{StaticResource StateBadBrush}" FontSize="13"
+                           FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="2" Style="{StaticResource CardBorder}" Padding="0">
+            <DataGrid x:Name="AlarmGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                      CanUserAddRows="False" HeadersVisibility="Column" BorderThickness="0" AlternationCount="2"
+                      Background="Transparent" RowBackground="Transparent" AlternatingRowBackground="Transparent">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="等级" Width="76">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="10,0,0,0">
+                                    <Border Width="3" Height="14" Background="{Binding LevelBrush}"
+                                            CornerRadius="1.5" Margin="0,0,7,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding LevelText}" FontSize="12"
+                                               Foreground="{Binding LevelBrush}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="设备" Binding="{Binding DeviceId}" Width="64"
+                                        ElementStyle="{StaticResource MonoTextElement}" />
+                    <DataGridTextColumn Header="报警号" Binding="{Binding AlarmNo}" Width="130"
+                                        ElementStyle="{StaticResource MonoTextElement}" />
+                    <DataGridTextColumn Header="内容" Binding="{Binding Message}" Width="*">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource BaseText}">
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="触发时间" Binding="{Binding RaisedText}" Width="130"
+                                        ElementStyle="{StaticResource SecondaryTextElement}" />
+                    <DataGridTextColumn Header="确认状态" Binding="{Binding AckText}" Width="110"
+                                        ElementStyle="{StaticResource SecondaryTextElement}" />
+                </DataGrid.Columns>
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                        <Setter Property="Height" Value="30" />
+                        <Style.Triggers>
+                            <Trigger Property="AlternationIndex" Value="1">
+                                <Setter Property="Background" Value="{StaticResource BgPanelAltBrush}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+            </DataGrid>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
             <Button x:Name="AckButton" Content="确认选中报警" Padding="12,4" Click="OnAckClick" />
             <TextBlock x:Name="AckHint" Margin="12,0,0,0" VerticalAlignment="Center"
-                       Text="确认将记录操作人与时间（C3）" Foreground="Gray" />
+                       Text="确认将记录操作人与时间（C3）" Style="{StaticResource SecondaryText}" />
         </StackPanel>
 
-        <TextBlock Grid.Row="3" x:Name="ErrorText" Foreground="Red" Margin="0,8,0,0" TextWrapping="Wrap" />
+        <TextBlock Grid.Row="4" x:Name="ErrorText" Foreground="{StaticResource StateBadBrush}"
+                   Margin="0,8,0,0" TextWrapping="Wrap" />
     </Grid>
 </UserControl>

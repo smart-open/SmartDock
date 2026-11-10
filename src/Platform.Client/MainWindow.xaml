@@ -1,31 +1,80 @@
 <Window x:Class="Platform.Client.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SmartDock" Height="640" Width="1020"
-        WindowStartupLocation="CenterScreen">
+        Title="SmartDock" Height="720" Width="1220" MinHeight="600" MinWidth="1024"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource BgBaseBrush}"
+        FontFamily="{StaticResource UiFontFamily}" UseLayoutRounding="True">
+    <!-- 主壳（中央监控总览图形态）：48px 状态条 + 220px 分组导航 + 内容区 -->
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="180" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-        <!-- 左侧导航：M3-1 五页（设备/点位/报警/报表/演示崩溃页） -->
-        <StackPanel Grid.Column="0" Background="#F0F0F0">
-            <TextBlock x:Name="SessionText" Margin="12,12,12,20" TextWrapping="Wrap" FontWeight="Bold" />
-            <Button x:Name="NavDevicesButton" Content="设备" Height="36" Margin="8,4"
-                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavDevicesClick" />
-            <Button x:Name="NavPointsButton" Content="点位" Height="36" Margin="8,4"
-                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavPointsClick" />
-            <Button x:Name="NavAlarmsButton" Content="报警" Height="36" Margin="8,4"
-                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavAlarmsClick" />
-            <Button x:Name="NavReportsButton" Content="报表" Height="36" Margin="8,4"
-                    HorizontalContentAlignment="Left" Padding="12,0" Click="OnNavReportsClick" />
-            <Separator Margin="8,12" />
-            <!-- 插件导航区（4.9）：条目由插件页注册表生成，RequiresFeatures 未满足的页不出现 -->
-            <StackPanel x:Name="PluginNavPanel" />
-        </StackPanel>
+        <!-- ===== 顶部状态条：品牌 | 面包屑 | 最后更新+连接点 | 报警铃铛 | 用户 ===== -->
+        <Border Grid.Row="0" Background="#0A1016" BorderBrush="#1E4A5A" BorderThickness="0,0,0,1">
+            <Grid Margin="14,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-        <!-- 右侧内容区：两页共享一个 ContentControl，按导航切换 -->
-        <ContentControl Grid.Column="1" x:Name="PageHost" Margin="12" />
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="SmartDock" FontSize="16" FontWeight="Bold" Foreground="#25D6E8" />
+                    <Border Width="1" Height="16" Background="#1E4A5A" Margin="12,0" />
+                    <TextBlock Text="工业设备接入平台" FontSize="12"
+                               Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <TextBlock Grid.Column="1" x:Name="BreadcrumbText" Text="总览" FontSize="13"
+                           FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"
+                           VerticalAlignment="Center" Margin="24,0,0,0" />
+
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="ConnectionDot" Width="8" Height="8" Fill="{StaticResource StateGoodBrush}"
+                             Margin="0,0,6,0" VerticalAlignment="Center" />
+                    <TextBlock x:Name="LastUpdateText" Text="连接中…" FontSize="12"
+                               Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- 报警铃铛：徽标数 = 未清报警数（红语义，0 时收起）；点击跳报警中心 -->
+                <Button Grid.Column="4" x:Name="AlarmBellButton" Click="OnAlarmBellClick"
+                        Margin="18,0,0,0" Padding="8,3" ToolTip="未清报警（跳转报警中心）">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="报警" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                        <Border x:Name="AlarmBadge" CornerRadius="8" MinWidth="16" Height="16" Margin="6,0,0,0"
+                                Background="{StaticResource StateBadBrush}" VerticalAlignment="Center">
+                            <TextBlock x:Name="AlarmBadgeText" Text="0" FontSize="10" FontWeight="Bold"
+                                       Foreground="#FFFFFF" TextAlignment="Center" Margin="3,0" />
+                        </Border>
+                    </StackPanel>
+                </Button>
+
+                <TextBlock Grid.Column="5" x:Name="SessionText" FontSize="12" Margin="18,0,0,0"
+                           Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <!-- ===== 主体：左侧 220px 导航 + 内容区 ===== -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" BorderBrush="{StaticResource BorderSubtleBrush}" BorderThickness="0,0,1,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <!-- 导航条目由代码生成：分组标题 + 高亮条（选中项左侧 3px 蓝条） -->
+                    <StackPanel x:Name="NavPanel" Margin="0,8" />
+                </ScrollViewer>
+            </Border>
+
+            <ContentControl Grid.Column="1" x:Name="PageHost" Margin="12" />
+        </Grid>
     </Grid>
 </Window>

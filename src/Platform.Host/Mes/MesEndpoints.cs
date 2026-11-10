@@ -2,6 +2,7 @@
 // 幂等键平台组装（6.4）；重复键由唯一索引挡住并返回 duplicate=true（不重复入账）。
 
 using System.Text.Json;
+using Platform.Core.Security;
 using Platform.Core.Mes;
 using Platform.Data;
 
@@ -149,7 +150,7 @@ public static class MesEndpoints
             }
 
             await store.RequeueAsync(id);
-            return Results.Ok(new { id, requeued = true, operator = operatorId.Value });
+            return Results.Ok(new { id, requeued = true, @operator = operatorId.Value });
         });
 
         /// <summary>LIKE 模式转义（\ % _），与 WorkOrderStore.EscapeLike 同口径。</summary>

@@ -39,6 +39,27 @@ public partial class AlarmsPage : UserControl
             AlarmGrid.ItemsSource = alarms.Select(alarm => new AlarmRow(alarm)).ToArray();
             ErrorText.Text = string.Empty;
             StatusText.Text = $"{alarms.Count} 条";
+
+            // 未确认横幅（S05 安灯口径）：横幅统计不受「仅未清」过滤影响，只对未清报警计数
+            if (alarms.Count > 0)
+            {
+                var unacked = alarms.Where(alarm => !alarm.AckedBy.HasValue).ToList();
+                if (unacked.Count > 0)
+                {
+                    var highest = unacked.Max(alarm => alarm.Level);
+                    UnackBannerText.Text =
+                        $"{unacked.Count} 条未确认 · 最高等级：{(highest >= 3 ? "严重" : highest == 2 ? "警告" : "提示")}";
+                    UnackBanner.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    UnackBanner.Visibility = Visibility.Collapsed;
+                }
+            }
+            else
+            {
+                UnackBanner.Visibility = Visibility.Collapsed;
+            }
         }
         catch (Exception ex)
         {
@@ -74,10 +95,20 @@ public partial class AlarmsPage : UserControl
     {
         public long Id => Source.Id;
         public string LevelText => Source.Level switch { 3 => "严重", 2 => "警告", _ => "提示" };
+        public string AlarmNo => Source.AlarmNo;
         public long? DeviceId => Source.DeviceId;
         public string Code => Source.Code;
         public string Message => Source.Message;
         public string RaisedText => Source.RaisedAt.ToLocalTime().ToString("MM-dd HH:mm:ss");
         public string AckText => Source.AckedBy.HasValue ? $"已确认(#{Source.AckedBy})" : "未确认";
+
+        /// <summary>等级语义色：3=严重红 / 2=警告黄 / 1=提示灰蓝（红只用于真实报警）。</summary>
+        public System.Windows.Media.Brush LevelBrush => (System.Windows.Media.Brush)
+            System.Windows.Application.Current!.TryFindResource(Source.Level switch
+            {
+                3 => "StateBadBrush",
+                2 => "StateWarnBrush",
+                _ => "StateStaleBrush",
+            }) ?? System.Windows.Media.Brushes.Gray;
     }
 }

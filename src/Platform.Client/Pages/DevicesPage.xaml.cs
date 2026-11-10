@@ -55,5 +55,10 @@ public partial class DevicesPage : UserControl
         public int PollMs => Device.PollMs;
         public long PointCount => Device.PointCount;
         public string EnabledText => Device.Enabled ? "是" : "否";
+
+        /// <summary>启用状态灯：绿=启用 / 灰=停用（语义铁律：灰=陈旧/停用）。</summary>
+        public System.Windows.Media.Brush EnabledBrush => (System.Windows.Media.Brush)
+            System.Windows.Application.Current!.TryFindResource(Device.Enabled ? "StateGoodBrush" : "StateStaleBrush")
+            ?? System.Windows.Media.Brushes.Gray;
     }
 }
