@@ -5,7 +5,9 @@
 # 报告：_acceptance_report.txt（附 12.9.2 实测表回填建议值）
 param(
     [ValidateSet("smoke", "full")]
-    [string]$Mode = "smoke"
+    [string]$Mode = "smoke",
+    # full 模式采样时长覆盖（小时）：0 = 按口径跑满 72h；缩短口径（如 24）时报告需注明
+    [int]$SampleHours = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,8 +20,10 @@ $ReconnectCount = 30
 $ReconnectDownSec = 5              # 每轮断线时长（断开后等驱动退避，最坏 30s 封顶 + 恢复窗口）
 $ReconnectRecoverTimeoutSec = 70   # 与 S4 同口径
 
-# full 模式跑满 72 h；smoke 模式压到 30 min（长时项在 smoke 下记 "（smoke 短窗，full 需 72h）"）
-$SampleDurationSec = if ($Mode -eq "full") { 72 * 3600 } else { 30 * 60 }
+# full 模式跑满 72 h（可用 -SampleHours 缩短口径）；smoke 模式压到 30 min（长时项在 smoke 下记 "（smoke 短窗，full 需 72h）"）
+$SampleDurationSec = if ($Mode -eq "full") {
+    if ($SampleHours -gt 0) { $SampleHours * 3600 } else { 72 * 3600 }
+} else { 30 * 60 }
 
 $script:passed = 0
 $script:failed = 0
@@ -93,6 +97,9 @@ function Get-DbLatencyMs {
 }
 
 Write-Host "=== M1-10 验收（$Mode）：build + 20 台基线 ===" -ForegroundColor Cyan
+Get-Process -Name "LoadSimulator", "Platform.Host" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
 dotnet build SmartDock.slnx 2>&1 | Select-String "error" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
@@ -100,9 +107,7 @@ if ($LASTEXITCODE -ne 0) { throw "build failed" }
 dotnet run --project tools/DbInit --no-build -- --sqlfile deploy/sql/scenarios/m1a_reset_20_devices.sql | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "baseline sql failed" }
 
-# 模拟器（20 台，端口 5100~5119）
-Get-Process -Name "LoadSimulator", "Platform.Host" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 1
+# 模拟器（20 台，端口 5100~5119）：残留清理已在 build 前做（运行中的 Host 会锁 DLL 导致构建失败）
 $simProc = Start-Process "tools\LoadSimulator\bin\Debug\net8.0\LoadSimulator.exe" -ArgumentList "5100", "20" -PassThru -WindowStyle Hidden
 if (-not (Wait-Port 5100 -TimeoutSec 15)) { throw "load simulator not ready on 5100" }
 
