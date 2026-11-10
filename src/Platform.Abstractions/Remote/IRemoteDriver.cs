@@ -2,13 +2,35 @@ namespace Platform.Abstractions.Remote;
 
 /// <summary>
 /// 进程外驱动契约（4.7 L2：由 PluginHost 子进程暴露，平台侧只依赖这个接口）。
-/// M1-8 最小骨架：读 + 连接 + 心跳；写与事件订阅随真实原生驱动插件补。
+/// 连接 + 批量读 + 批量写 + 事件订阅，与 4.7 的 IRemoteDriver 设计签名一一对应。
 /// </summary>
 public interface IRemoteDriver
 {
     /// <summary>endpoint 原样 JSON 透传（各协议自解释，与 DeviceConfig.endpoint 列一致）。</summary>
     Task<ConnectResult> ConnectAsync(string endpointJson, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ReadValue>> ReadAsync(IReadOnlyList<PointRef> points, CancellationToken cancellationToken = default);
+    /// <summary>批量写（5.6 写路径的远程形态；每点独立结果，失败不抛）。</summary>
+    Task<IReadOnlyList<WriteResult>> WriteAsync(
+        IReadOnlyList<(PointRef Point, double Value)> writes, CancellationToken cancellationToken = default);
+    /// <summary>驱动侧事件流（连接变化 / 写完成等）；消费方停止枚举即退订。</summary>
+    IAsyncEnumerable<DeviceEvent> SubscribeAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>驱动侧事件（Subscribe 契约载体）；payload 为各事件类型的自解释 JSON。</summary>
+public sealed record DeviceEvent(
+    string EventType,
+    long DeviceId,
+    string PayloadJson,
+    DateTime TimestampUtc);
+
+/// <summary>
+/// 驱动事件源（可选契约）：产生连接变化/写完成等事件的驱动实现此接口，
+/// 宿主据此转发 Subscribe 流；只读且无事件的驱动不实现（接口隔离）。
+/// </summary>
+public interface IDeviceEventSource
+{
+    /// <summary>事件流；消费方停止枚举即退订，取消/宿主退出视为流正常结束。</summary>
+    IAsyncEnumerable<DeviceEvent> SubscribeAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>驱动插件清单（5.11.4 ②：arch 声明决定隔离方式；位数不匹配必须 Blocked）。</summary>

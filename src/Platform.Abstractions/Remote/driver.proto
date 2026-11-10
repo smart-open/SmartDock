@@ -1,5 +1,5 @@
 // 进程外驱动 gRPC 契约（4.7 L2）。主进程是 client，PluginHost 子进程是 server。
-// M1-8 最小骨架：Ping（心跳）/Connect/Read；Write/Subscribe 随原生驱动插件补。
+// 全契约：Ping（心跳）/Connect/Read/Write/Subscribe（事件订阅，server-streaming）。
 syntax = "proto3";
 
 option csharp_namespace = "Platform.Abstractions.Remote";
@@ -10,6 +10,8 @@ service RemoteDriver {
   rpc Ping (PingRequest) returns (PingReply);
   rpc Connect (ConnectRequest) returns (ConnectReply);
   rpc Read (ReadRequest) returns (ReadReply);
+  rpc Write (WriteRequest) returns (WriteReply);
+  rpc Subscribe (SubscribeRequest) returns (stream DeviceEventDto);
 }
 
 message PingRequest {}
@@ -51,4 +53,38 @@ message ReadValueDto {
   int32 quality = 4;          // QualityCode 枚举值
   int64 timestamp_unix_ms = 5;
   string error = 6;           // Bad 时的原因
+}
+
+message WriteRequest {
+  repeated WriteDto writes = 1;
+}
+
+message WriteDto {
+  int64 point_id = 1;
+  int64 device_id = 2;
+  string point_code = 3;
+  string address = 4;
+  string data_type = 5;
+  double value = 6;
+}
+
+message WriteReply {
+  repeated WriteResultDto results = 1;
+}
+
+message WriteResultDto {
+  int64 point_id = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message SubscribeRequest {}
+
+// 驱动侧事件（4.7 L2 SubscribeAsync 契约）：连接状态变化 / 写完成等。
+// payload_json 各事件类型自解释（与 device.endpoint 的「JSON 自描述」口径一致）。
+message DeviceEventDto {
+  string event_type = 1;
+  int64 device_id = 2;
+  string payload_json = 3;
+  int64 timestamp_unix_ms = 4;
 }

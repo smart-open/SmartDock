@@ -7,6 +7,7 @@ using Grpc.Core;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Platform.Abstractions;
+using Platform.Abstractions.Remote;
 using Platform.PluginHost;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,8 +19,11 @@ builder.WebHost.ConfigureKestrel(options =>
 });
 builder.Services.AddGrpc();
 
-// 骨架驱动（真实原生 SDK 插件随首个运控/视觉项目接入，走同一装载路径）
-builder.Services.AddSingleton<IDeviceDriver>(new EchoDriver());
+// 骨架驱动（真实原生 SDK 插件随首个运控/视觉项目接入，走同一装载路径）。
+// 写与事件通道随 M1-8 全契约补齐：EchoDriver 实现可写 + 事件源，供 E2E 断言管道
+builder.Services.AddSingleton<EchoDriver>();
+builder.Services.AddSingleton<IDeviceDriver>(sp => sp.GetRequiredService<EchoDriver>());
+builder.Services.AddSingleton<IDeviceEventSource>(sp => sp.GetRequiredService<EchoDriver>());
 
 var app = builder.Build();
 app.MapGrpcService<RemoteDriverService>();
@@ -34,18 +38,38 @@ Console.Out.Flush();
 
 await app.WaitForShutdownAsync();
 
-/// <summary>骨架期内置驱动：返回自增序列（主进程 E2E 断言用：重启后序列归零可观测子进程重建）。</summary>
-internal sealed class EchoDriver : IDeviceDriver
+/// <summary>
+/// 骨架期内置驱动：读返回自增序列（重启后归零可观测子进程重建），
+/// 写记录最近值并回报成功，连接/写动作产生事件（Subscribe 管道 E2E 断言用）。
+/// </summary>
+public sealed class EchoDriver : IDeviceWriteDriver, IDeviceEventSource
 {
     private long _tick;
+    private readonly System.Threading.Channels.Channel<DeviceEvent> _events =
+        System.Threading.Channels.Channel.CreateUnbounded<DeviceEvent>();
+
+    private readonly Dictionary<long, double> _lastWritten = new();
+
+    /// <summary>事件流（RemoteDriverService.Subscribe 经此转发；unbounded 通道骨架期无背压需求）。</summary>
+    public async IAsyncEnumerable<DeviceEvent> SubscribeAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var ev in _events.Reader.ReadAllAsync(cancellationToken))
+        {
+            yield return ev;
+        }
+    }
 
     public string DriverIdValue => "driver.remote.echo";
 
     public DriverDescriptor Describe() =>
-        new(DriverIdValue, "Echo (in-process skeleton)", SupportsWrite: false, MaxBatchPerRequest: 120);
+        new(DriverIdValue, "Echo (in-process skeleton)", SupportsWrite: true, MaxBatchPerRequest: 120);
 
     public Task<ConnectResult> ConnectAsync(CancellationToken cancellationToken = default)
-        => Task.FromResult(new ConnectResult(true, null));
+    {
+        Publish("connection.changed", 0, """{"connected":true}""");
+        return Task.FromResult(new ConnectResult(true, null));
+    }
 
     public Task DisconnectAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -65,4 +89,19 @@ internal sealed class EchoDriver : IDeviceDriver
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    public Task<WriteResult> WriteAsync(PointRef point, double value,
+        CancellationToken cancellationToken = default)
+    {
+        _lastWritten[point.PointId] = value;
+        Publish("write.completed", point.DeviceId,
+            System.Text.Json.JsonSerializer.Serialize(new { point.PointId, value }));
+        return Task.FromResult(new WriteResult(true, null));
+    }
+
+    private void Publish(string eventType, long deviceId, string payloadJson)
+    {
+        // TryWrite 永远成功（unbounded）；测试驱动不会成为内存压力源
+        _events.Writer.TryWrite(new DeviceEvent(eventType, deviceId, payloadJson, DateTime.UtcNow));
+    }
 }

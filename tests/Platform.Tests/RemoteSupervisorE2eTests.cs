@@ -96,6 +96,57 @@ public class RemoteSupervisorE2eTests
         Assert.True(recovered, "supervisor did not restart child within 40s");
     }
 
+    [Fact]
+    public async Task Supervisor_WriteAndSubscribe_FullContractThroughProxy()
+    {
+        // 4.7 L2 全契约：写（WriteGuard 远程路径）+ 事件订阅，经真实子进程 gRPC
+        var testLogger = new TestOutputLogger<RemoteDriverSupervisor>(_output);
+        await using var supervisor = new RemoteDriverSupervisor(FindPluginHostExe(), testLogger);
+        await supervisor.StartAsync();
+
+        var proxy = supervisor.CreateProxy("driver.remote.echo");
+        var point = new PointRef(7, 3, "setpoint", "HR100", "Float32");
+
+        // 1) 先订事件再动作（保证事件不因订阅晚了而漏收）
+        var received = new System.Collections.Concurrent.ConcurrentQueue<DeviceEvent>();
+        using var subscribeCts = new CancellationTokenSource();
+        var subscribeTask = Task.Run(async () =>
+        {
+            await foreach (var ev in proxy.SubscribeAsync(subscribeCts.Token))
+            {
+                received.Enqueue(ev);
+            }
+        });
+        await Task.Delay(500);   // gRPC 流建立窗口
+
+        // 2) 写（代理 IDeviceWriteDriver 形态，WriteGuard 实际调用的签名）
+        var write = await ((IDeviceWriteDriver)proxy).WriteAsync(point, 42.5);
+        Assert.True(write.Success, $"write failed: {write.Error}");
+        _output.WriteLine("write ok");
+
+        // 3) 连接（EchoDriver 发 connection.changed 事件）
+        var connect = await proxy.ConnectAsync();
+        Assert.True(connect.Success);
+
+        // 4) 事件到达断言：write.completed（含写入值）+ connection.changed
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline &&
+               (!received.Any(ev => ev.EventType == "write.completed") ||
+                !received.Any(ev => ev.EventType == "connection.changed")))
+        {
+            await Task.Delay(200);
+        }
+
+        subscribeCts.Cancel();
+        try { await subscribeTask; } catch (OperationCanceledException) { }
+
+        var events = received.ToArray();
+        _output.WriteLine($"events: {string.Join(", ", events.Select(ev => $"{ev.EventType}@dev{ev.DeviceId} {ev.PayloadJson}"))}");
+        Assert.Contains(events, ev => ev.EventType == "write.completed" && ev.DeviceId == 3 && ev.PayloadJson.Contains("42.5"));
+        Assert.Contains(events, ev => ev.EventType == "connection.changed");
+        Assert.All(events, ev => Assert.True(ev.TimestampUtc > DateTime.MinValue));
+    }
+
     private sealed class TestOutputLogger<T>(ITestOutputHelper output)
         : Microsoft.Extensions.Logging.ILogger<T>
     {

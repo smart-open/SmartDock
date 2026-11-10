@@ -5,11 +5,11 @@ using Platform.Abstractions.Remote;
 namespace Platform.Core.Remote;
 
 /// <summary>
-/// 远程驱动代理：把 gRPC 适配成 IDeviceDriver，PollingScheduler 无感知
-/// （5.5 调度只认驱动契约，4.7 L2 隔离对调度透明）。
-/// 连接/读失败不抛（5.2 驱动契约），转 ConnectResult/Bad；取消按取消语义上抛。
+/// 远程驱动代理：把 gRPC 适配成 IDeviceDriver + IDeviceWriteDriver，PollingScheduler
+/// 与 WriteGuard 均无感知（5.5 调度 / 5.6 写闸只认驱动契约，4.7 L2 隔离透明）。
+/// 连接/读/写失败不抛（5.2/5.6 契约），转 ConnectResult/WriteResult/Bad；取消按取消语义上抛。
 /// </summary>
-public sealed class RemoteDriverProxy : IDeviceDriver
+public sealed class RemoteDriverProxy : IDeviceWriteDriver
 {
     private readonly RemoteDriverSupervisor _supervisor;
 
@@ -21,8 +21,11 @@ public sealed class RemoteDriverProxy : IDeviceDriver
 
     public string DriverIdValue { get; }
 
+    // SupportsWrite 反映的是「管道能力」：远程驱动若只读，Write RPC 返回逐点失败结果
+    //（错误信息指明原因）——类型层面声明写能力 + 运行时逐点如实回报，比让 WriteGuard
+    // 对远程设备一律「不支持写」更符合 5.6 的留痕语义
     public DriverDescriptor Describe() =>
-        new(DriverIdValue, "remote (out-of-process)", SupportsWrite: false, MaxBatchPerRequest: 120);
+        new(DriverIdValue, "remote (out-of-process)", SupportsWrite: true, MaxBatchPerRequest: 120);
 
     public Task DisconnectAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -92,4 +95,89 @@ public sealed class RemoteDriverProxy : IDeviceDriver
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    public async Task<WriteResult> WriteAsync(PointRef point, double value,
+        CancellationToken cancellationToken = default)
+    {
+        var results = await WriteBatchAsync(
+            [(point, value)], cancellationToken);
+        var result = results[0];
+        return result;
+    }
+
+    private async Task<IReadOnlyList<WriteResult>> WriteBatchAsync(
+        IReadOnlyList<(PointRef Point, double Value)> writes,
+        CancellationToken cancellationToken)
+    {
+        var request = new WriteRequest();
+        foreach (var (point, value) in writes)
+        {
+            request.Writes.Add(new WriteDto
+            {
+                PointId = point.PointId,
+                DeviceId = point.DeviceId,
+                PointCode = point.PointCode,
+                Address = point.Address,
+                DataType = point.DataType,
+                Value = value,
+            });
+        }
+
+        try
+        {
+            var reply = await _supervisor.Client.WriteAsync(
+                request, deadline: DateTime.UtcNow.AddSeconds(5), cancellationToken: cancellationToken);
+            var results = new WriteResult[reply.Results.Count];
+            for (var i = 0; i < reply.Results.Count; i++)
+            {
+                var dto = reply.Results[i];
+                results[i] = new WriteResult(dto.Success, dto.Error is "" ? null : dto.Error);
+            }
+
+            return results;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (RpcException ex)
+        {
+            // 宿主僵死/重启窗口：全部逐点失败（5.6 留痕语义：失败原因进 write_command）
+            var reason = $"remote host unreachable: {ex.Status.StatusCode}";
+            return writes.Select(w => new WriteResult(false, reason)).ToArray();
+        }
+    }
+
+    public async IAsyncEnumerable<DeviceEvent> SubscribeAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var call = _supervisor.Client.Subscribe(
+            new SubscribeRequest(), cancellationToken: cancellationToken);
+        var stream = call.ResponseStream;
+        while (true)
+        {
+            DeviceEventDto dto;
+            try
+            {
+                if (!await stream.MoveNext(cancellationToken))
+                {
+                    break;
+                }
+
+                dto = stream.Current;
+            }
+            catch (RpcException ex) when (
+                ex.Status.StatusCode == StatusCode.Cancelled ||
+                ex.Status.StatusCode == StatusCode.Unavailable)
+            {
+                // 取消/宿主退出 = 流正常结束（「消费方停止枚举即退订」的契约语义）；
+                // 其他 RPC 失败如实上抛，避免静默吞掉真实管道故障
+                break;
+            }
+
+            yield return new DeviceEvent(
+                dto.EventType, dto.DeviceId, dto.PayloadJson,
+                DateTimeOffset.FromUnixTimeMilliseconds(dto.TimestampUnixMs).UtcDateTime);
+        }
+    }
 }
