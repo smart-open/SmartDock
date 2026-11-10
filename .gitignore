@@ -30,3 +30,5 @@ commit-msg.txt
 # keep dirs
 !tests/.gitkeep
 !scripts/.gitkeep
+# 72h soak live log（run-m1-acceptance 重定向输出，跑完随报告归档后删除）
+_soak.txt
