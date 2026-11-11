@@ -64,7 +64,7 @@ public static class FeatureEndpoints
             {
                 await store.SaveScopeOverrideAsync(key, "global", "*", request.Enabled,
                     request.Reason, request.TicketNo, updatedBy: operatorId.Value, cancellationToken);
-                gate.InvalidateCache();   // 本节点立即可见；其他节点靠版本号在 30s 内跟进
+                gate.InvalidateCache();   // 本节点立即可见；其他节点靠版本号在 ~5s 内跟进
             }
 
             return Results.Ok(new { key, enabled = request.Enabled, runtimeScope = plan.RuntimeScope });

@@ -104,6 +104,7 @@ public class FeatureGateTests
         public DateTimeOffset UtcNowValue { get; set; } = DateTimeOffset.UtcNow;
         public override DateTimeOffset GetUtcNow() => UtcNowValue;
         public void AdvanceMinutes(double minutes) => UtcNowValue = UtcNowValue.AddMinutes(minutes);
+        public void AdvanceSeconds(double seconds) => UtcNowValue = UtcNowValue.AddSeconds(seconds);
     }
 
     [Fact]
@@ -172,10 +173,16 @@ public class FeatureGateTests
         _ = gate.Get("f1");
         Assert.Equal(1, store.DefinitionLoadCount);   // TTL + 版本号都命中 → 不回源
 
-        store.Version++;                               // 开关写入推进版本号 → 立即失效
+        store.Version++;                               // 信任窗（5s）内不复查版本号：快照热路径零查库
+        _ = gate.Get("f1");
+        Assert.Equal(1, store.DefinitionLoadCount);
+
+        clock.AdvanceSeconds(6);                       // 过信任窗 → 版本号复查发现 bump → 回源
         _ = gate.Get("f1");
         Assert.Equal(2, store.DefinitionLoadCount);
 
+        // 本节点写入走 gate.InvalidateCache()（端点写后强制失效），不受信任窗影响；
+        // 信任窗只延迟「跨节点」变更可见性：最坏 ~5s（原口径 30s）
         clock.AdvanceMinutes(1);                       // TTL 过期 → 也回源
         _ = gate.Get("f1");
         Assert.Equal(3, store.DefinitionLoadCount);

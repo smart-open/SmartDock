@@ -16,11 +16,12 @@ public static class MesEndpoints
 
         // 报工上传（6.2 接口 3）：workOrderNo + stepNo 必填，payload 原文透传入 Outbox。
         // seq 不能用 MesIdempotencyKeyBuilder 的进程内存计数器——重启后从 1 重计，
-        // 会与历史键撞车被唯一索引误判重（新报工静默丢失）；改为 DB 前缀计数（与
-        // WorkOrderStore.ChangeStatusAsync 同口径），order_no 含 %/_ 时须转义。
+        // 会与历史键撞车被唯一索引误判重（新报工静默丢失）；也不能从 mes_outbox 行数
+        // COUNT 推导——归档/清理后计数回退同样复用旧键（与 WorkOrderStore.ChangeStatusAsync
+        // 一并改为计数表单调自增，V015）
         group.MapPost("/report", async (ReportRequest request, Npgsql.NpgsqlDataSource dataSource) =>
         {
-            // workOrderNo 省略时 EscapeLike(null) NRE → 500；入口挡住
+            // workOrderNo 省略 → 后续计数/键组装无意义；入口挡住
             if (string.IsNullOrWhiteSpace(request.WorkOrderNo))
             {
                 return Results.BadRequest(new { error = "workOrderNo is required" });
@@ -42,12 +43,16 @@ public static class MesEndpoints
                 }
 
                 await using var seqCommand = new Npgsql.NpgsqlCommand("""
-                    SELECT COUNT(*) FROM mes_outbox
-                    WHERE biz_type = 'production.report' AND idempotency_key LIKE @like ESCAPE '\'
+                    INSERT INTO mes_report_seq (work_order_no, step_no, last_seq)
+                    VALUES (@no, @step, 1)
+                    ON CONFLICT (work_order_no, step_no)
+                    DO UPDATE SET last_seq = mes_report_seq.last_seq + 1
+                    RETURNING last_seq
                     """, connection, transaction);
-                var prefix = $"production.report:{EscapeLike(request.WorkOrderNo)}:{request.StepNo}";
-                seqCommand.Parameters.AddWithValue("like", prefix + ":%");
-                var seq = (int)(long)(await seqCommand.ExecuteScalarAsync())! + 1;
+                seqCommand.Parameters.AddWithValue("no", request.WorkOrderNo);
+                seqCommand.Parameters.AddWithValue("step", request.StepNo);
+                var seq = (int)(await seqCommand.ExecuteScalarAsync())!;
+                var prefix = $"production.report:{request.WorkOrderNo}:{request.StepNo}";
                 var idempotencyKey = $"{prefix}:{seq}";
 
                 var payloadJson = JsonSerializer.Serialize(request);
@@ -153,11 +158,6 @@ public static class MesEndpoints
             return Results.Ok(new { id, requeued = true, @operator = operatorId.Value });
         });
 
-        /// <summary>LIKE 模式转义（\ % _），与 WorkOrderStore.EscapeLike 同口径。</summary>
-        static string EscapeLike(string value) => value
-            .Replace(@"\", @"\\", StringComparison.Ordinal)
-            .Replace("%", @"\%", StringComparison.Ordinal)
-            .Replace("_", @"\_", StringComparison.Ordinal);
     }
 }
 

@@ -1,4 +1,5 @@
-// 02 §3.7.1 存储：定义全量读（缓存回源）、范围解析（窄覆盖宽）、变更落库 + 版本号推进。
+// 02 §3.7.1 存储：定义全量读（缓存回源）、范围解析（窄覆盖宽，覆盖行缓存后纯内存匹配）、
+// 变更落库 + 版本号推进。
 // NpgsqlDataSource 由 Host 组合根注入（与 ReportStore 同口径，复用全局连接池）。
 
 using Npgsql;
@@ -36,6 +37,14 @@ public sealed class FeatureStore : IFeatureStore
 {
     private readonly NpgsqlDataSource _dataSource;
 
+    // 覆盖行缓存：与 FeatureGate 定义缓存同一套口径（版本号 + TTL + 竞态复核 + 信任窗）。
+    // Resolve 原实现每次查库——Snapshot 对 70 键逐个 Get 即 70 次/快照（S28.5 性能债）；
+    // 改为缓存全量覆盖行后按层级在内存匹配，快照热路径零查库
+    private readonly object _overrideCacheLock = new();
+    private (long Version, DateTimeOffset LoadedAt, IReadOnlyList<FeatureScopeOverrideRow> Rows)? _overrideCache;
+    private static readonly TimeSpan OverrideCacheTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan OverrideVersionTrustWindow = TimeSpan.FromSeconds(5);
+
     public FeatureStore(NpgsqlDataSource dataSource)
     {
         _dataSource = dataSource;
@@ -72,53 +81,81 @@ public sealed class FeatureStore : IFeatureStore
 
     public bool? Resolve(string key, FeatureScope? scope)
     {
-        // 只解析与请求范围匹配的覆盖层：global 恒生效，factory/workshop/line 各自
-        // 精确匹配 scope_id。否则任意一条 line 级覆盖会压过全平台所有范围
-        //（02 §3.7.1「line > workshop > factory > global」是层级优先序，不是无差别压序）
-        using var command = _dataSource.CreateCommand(
-            """
-            -- 窄覆盖宽：line(3) > workshop(2) > factory(1) > global(0)，
-            -- 同层取 effective_from 最新且当前生效的一条；无匹配 = 无覆盖（调用方用 default）
-            SELECT enabled FROM feature_scope
-            WHERE flag_key = @key
-              AND (
-                    scope_type = 'global'
-                    OR (scope_type = 'factory'  AND @factory  IS NOT NULL AND scope_id = @factory)
-                    OR (scope_type = 'workshop' AND @workshop IS NOT NULL AND scope_id = @workshop)
-                    OR (scope_type = 'line'     AND @line     IS NOT NULL AND scope_id = @line)
-                  )
-              AND (effective_from IS NULL OR effective_from <= now())
-              AND (effective_to IS NULL OR effective_to > now())
-            ORDER BY CASE scope_type WHEN 'line' THEN 3 WHEN 'workshop' THEN 2
-                                     WHEN 'factory' THEN 1 ELSE 0 END DESC,
-                     effective_from DESC NULLS LAST,
-                     id DESC
-            LIMIT 1
-            """);
-        command.Parameters.AddWithValue("key", key);
-        var scopeValue = scope ?? new FeatureScope(string.Empty);
-        // 范围参数必须显式 NpgsqlDbType.Text：AddWithValue 塞 DBNull 时 Npgsql 不发类型，
-        // Postgres 对 "@p IS NOT NULL AND scope_id = @p" 推断不出 $n 类型（42P08）
-        command.Parameters.Add(new NpgsqlParameter("factory", NpgsqlTypes.NpgsqlDbType.Text)
+        return FeatureScopeResolver.Resolve(GetScopeOverridesCached(), key, scope, DateTime.UtcNow);
+    }
+
+    private IReadOnlyList<FeatureScopeOverrideRow> GetScopeOverridesCached()
+    {
+        lock (_overrideCacheLock)
         {
-            Value = string.IsNullOrEmpty(scopeValue.Factory) ? DBNull.Value : scopeValue.Factory,
-        });
-        command.Parameters.Add(new NpgsqlParameter("workshop", NpgsqlTypes.NpgsqlDbType.Text)
+            var now = DateTimeOffset.UtcNow;
+            if (_overrideCache is { } cached)
+            {
+                // 信任窗内免查版本号：Resolve 在快照里逐键调用，每次查版本号会把
+                // 内存匹配的优势吃光。窗口内变更最坏延迟 5s（远小于原 30s 口径）
+                if (now - cached.LoadedAt < OverrideVersionTrustWindow)
+                {
+                    return cached.Rows;
+                }
+
+                if (now - cached.LoadedAt < OverrideCacheTtl && cached.Version == GetVersion())
+                {
+                    _overrideCache = (cached.Version, now, cached.Rows);
+                    return cached.Rows;
+                }
+            }
+
+            var versionBefore = GetVersion();
+            var rows = GetAllScopeOverrides();
+            var versionAfter = GetVersion();
+            if (versionBefore != versionAfter)
+            {
+                // 回源期间有写提交：本次不缓存，退回 TTL 兜底（与 FeatureGate 定义缓存同策略）
+                return rows;
+            }
+
+            _overrideCache = (versionAfter, now, rows);
+            return rows;
+        }
+    }
+
+    private void InvalidateOverrideCache()
+    {
+        lock (_overrideCacheLock)
         {
-            Value = (object?)scopeValue.Workshop ?? DBNull.Value,
-        });
-        command.Parameters.Add(new NpgsqlParameter("line", NpgsqlTypes.NpgsqlDbType.Text)
-        {
-            Value = (object?)scopeValue.Line ?? DBNull.Value,
-        });
-        using var reader = command.ExecuteReader();
-        return reader.Read() ? reader.GetBoolean(0) : null;
+            _overrideCache = null;
+        }
     }
 
     public long GetVersion()
     {
         using var command = _dataSource.CreateCommand("SELECT version FROM feature_version WHERE id = 1");
         return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    /// <summary>覆盖行全量读（缓存回源用；覆盖行总量 = 能力数 × 层级数，量级很小）。</summary>
+    private IReadOnlyList<FeatureScopeOverrideRow> GetAllScopeOverrides()
+    {
+        using var command = _dataSource.CreateCommand(
+            """
+            SELECT id, flag_key, scope_type, scope_id, enabled, effective_from, effective_to
+            FROM feature_scope
+            """);
+        using var reader = command.ExecuteReader();
+        var rows = new List<FeatureScopeOverrideRow>();
+        while (reader.Read())
+        {
+            rows.Add(new FeatureScopeOverrideRow(
+                reader.GetInt64(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetBoolean(4),
+                reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                reader.IsDBNull(6) ? null : reader.GetDateTime(6)));
+        }
+
+        return rows;
     }
 
     public async Task SaveScopeOverrideAsync(string key, string scopeType, string scopeId, bool enabled,
@@ -146,6 +183,8 @@ public sealed class FeatureStore : IFeatureStore
             connection, transaction);
         await bump.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        // 本实例写库后缓存必然过期：立即失效（跨实例写入靠版本号/TTL 兜底）
+        InvalidateOverrideCache();
     }
 
     public async Task<IReadOnlyDictionary<string, bool>> ResolveKeysAsync(
@@ -194,6 +233,7 @@ public sealed class FeatureStore : IFeatureStore
             connection, transaction);
         await bump.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        InvalidateOverrideCache();
     }
 
     public async Task<bool> DeleteLastScopeOverrideAsync(string key, long updatedBy, CancellationToken cancellationToken = default)
@@ -226,10 +266,113 @@ public sealed class FeatureStore : IFeatureStore
             connection, transaction);
         await bump.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        InvalidateOverrideCache();
         return true;
     }
 
     // text[] 列直接取 Npgsql 数组映射，避免手工 split
     private static string[] MapArray(NpgsqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? [] : (string[])reader.GetValue(ordinal);
+}
+
+/// <summary>feature_scope 覆盖行（Resolve 内存匹配的输入；字段与表列一一对应）。</summary>
+public sealed record FeatureScopeOverrideRow(
+    long Id,
+    string Key,
+    string ScopeType,
+    string ScopeId,
+    bool Enabled,
+    DateTime? EffectiveFrom,
+    DateTime? EffectiveTo);
+
+/// <summary>
+/// 3.7.1 范围解析的纯函数实现（可单测）：
+/// 只解析与请求范围匹配的覆盖层——global 恒生效，factory/workshop/line 各自精确匹配
+/// scope_id（层级是优先序不是无差别压序：任意一条 line 覆盖不得压过全平台所有范围）；
+/// 同层取 effective_from 最新且当前生效的一条；无匹配 = 无覆盖（调用方用 default）。
+/// </summary>
+public static class FeatureScopeResolver
+{
+    public static bool? Resolve(
+        IReadOnlyList<FeatureScopeOverrideRow> rows, string key, FeatureScope? scope, DateTime utcNow)
+    {
+        var scopeValue = scope ?? new FeatureScope(string.Empty);
+        FeatureScopeOverrideRow? best = null;
+
+        foreach (var row in rows)
+        {
+            if (row.Key != key || !MatchesScope(row, scopeValue) || !IsEffective(row, utcNow))
+            {
+                continue;
+            }
+
+            // 排序口径与原 SQL 完全一致：层级降序 → effective_from 降序（NULL 最后）→ id 降序。
+            // id 平局裁决不可省：同层同 effective_from 的两条覆盖（回滚后重写的常见形态）
+            // 没有 id DESC 就取错行（单测 SameRankSameFromHigherIdWins 抓到的回归）
+            if (best is null || WinsOver(row, best))
+            {
+                best = row;
+            }
+        }
+
+        return best?.Enabled;
+    }
+
+    private static bool WinsOver(FeatureScopeOverrideRow candidate, FeatureScopeOverrideRow incumbent)
+    {
+        var candidateRank = ScopeRank(candidate.ScopeType);
+        var incumbentRank = ScopeRank(incumbent.ScopeType);
+        if (candidateRank != incumbentRank)
+        {
+            return candidateRank > incumbentRank;
+        }
+
+        var byEffectiveFrom = CompareEffectiveFrom(candidate.EffectiveFrom, incumbent.EffectiveFrom);
+        if (byEffectiveFrom != 0)
+        {
+            return byEffectiveFrom > 0;
+        }
+
+        return candidate.Id > incumbent.Id;
+    }
+
+    private static bool MatchesScope(FeatureScopeOverrideRow row, FeatureScope scope)
+    {
+        return row.ScopeType switch
+        {
+            "global" => true,
+            "factory" => !string.IsNullOrEmpty(scope.Factory) && row.ScopeId == scope.Factory,
+            "workshop" => !string.IsNullOrEmpty(scope.Workshop) && row.ScopeId == scope.Workshop,
+            "line" => !string.IsNullOrEmpty(scope.Line) && row.ScopeId == scope.Line,
+            _ => false,   // 未知层级不参与匹配（防御脏数据，与原 SQL 行为一致：都不匹配则无覆盖）
+        };
+    }
+
+    private static bool IsEffective(FeatureScopeOverrideRow row, DateTime utcNow) =>
+        (row.EffectiveFrom is null || row.EffectiveFrom <= utcNow)
+        && (row.EffectiveTo is null || row.EffectiveTo > utcNow);
+
+    private static int ScopeRank(string scopeType) => scopeType switch
+    {
+        "line" => 3,
+        "workshop" => 2,
+        "factory" => 1,
+        _ => 0,
+    };
+
+    private static int CompareEffectiveFrom(DateTime? left, DateTime? right)
+    {
+        // NULLS LAST 语义：null 排在所有非空之后
+        if (left is null)
+        {
+            return right is null ? 0 : -1;
+        }
+
+        if (right is null)
+        {
+            return 1;
+        }
+
+        return DateTime.Compare(left.Value, right.Value);
+    }
 }

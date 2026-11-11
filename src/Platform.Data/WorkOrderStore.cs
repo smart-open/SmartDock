@@ -211,15 +211,13 @@ public sealed class WorkOrderStore
                 // 幂等：同状态重复请求直接返回当前序号，不再产新报文（状态变化才触发，6.2 接口 2）
                 await transaction.RollbackAsync(CancellationToken.None);
                 await using var seqRead = new NpgsqlCommand("""
-                    SELECT COUNT(*) FROM mes_outbox
-                    WHERE biz_type = 'work.order.status' AND idempotency_key LIKE @like ESCAPE '\'
+                    SELECT last_seq FROM work_order_status_seq
+                    WHERE order_id = @id AND status = @status
                     """, connection);
-                // 与下方新报文分支同口径：LIKE 通配符转义，防 order_no 含 %/_ 时 seq 错乱
-                seqRead.Parameters.AddWithValue("like",
-                    $"work.order.status:{EscapeLike(orderNo)}:{newStatus}:%");
-                // COUNT(*) 返回 bigint（Int64），显式转 int 而非直接 cast（直接 (int) 装 Int64 会 InvalidCastException）
-                var existingCount = (long)(await seqRead.ExecuteScalarAsync(cancellationToken))!;
-                return (int)existingCount;
+                seqRead.Parameters.AddWithValue("id", orderId);
+                seqRead.Parameters.AddWithValue("status", newStatus);
+                var lastSeq = await seqRead.ExecuteScalarAsync(cancellationToken);
+                return lastSeq is null ? 0 : (int)lastSeq;
             }
 
             await using var updateCommand = new NpgsqlCommand(
@@ -228,17 +226,19 @@ public sealed class WorkOrderStore
             updateCommand.Parameters.AddWithValue("id", orderId);
             await updateCommand.ExecuteNonQueryAsync(cancellationToken);
 
-            // 状态回传报文同事务入 Outbox，幂等键 = workOrderNo + status + seq（6.2 接口 2）
+            // 状态回传报文同事务入 Outbox，幂等键 = workOrderNo + status + seq（6.2 接口 2）。
+            // seq 取计数表单调自增（V015），不再从 mes_outbox 行数 COUNT 推导——
+            // outbox 归档/清理后行数回退会复用已删旧键，MES 端幂等去重把新状态变更静默丢掉
             await using var seqCommand = new NpgsqlCommand("""
-                SELECT COUNT(*) FROM mes_outbox
-                WHERE biz_type = 'work.order.status' AND idempotency_key LIKE @like ESCAPE '\'
+                INSERT INTO work_order_status_seq (order_id, status, last_seq)
+                VALUES (@id, @status, 1)
+                ON CONFLICT (order_id, status)
+                DO UPDATE SET last_seq = work_order_status_seq.last_seq + 1
+                RETURNING last_seq
                 """, connection, transaction);
-            // order_no 是业务透传值，可能含 % 或 _（LIKE 通配符）：不转义会把别的单号
-            // 的报文计进来，seq 错乱后又反撞唯一索引。ESCAPE 前缀精确匹配。
-            seqCommand.Parameters.AddWithValue("like",
-                $"work.order.status:{EscapeLike(orderNo)}:{newStatus}:%");
-            var priorMessageCount = (long)(await seqCommand.ExecuteScalarAsync(cancellationToken))!;
-            var seq = (int)priorMessageCount + 1;
+            seqCommand.Parameters.AddWithValue("id", orderId);
+            seqCommand.Parameters.AddWithValue("status", newStatus);
+            var seq = (int)(await seqCommand.ExecuteScalarAsync(cancellationToken))!;
 
             await using var insertOutbox = new NpgsqlCommand("""
                 INSERT INTO mes_outbox (biz_type, target, idempotency_key, payload)
@@ -261,12 +261,6 @@ public sealed class WorkOrderStore
     }
 
     public sealed record StatusPayload(string OrderNo, short Status, int Seq);
-
-    /// <summary>LIKE 模式转义：\ % _ 三字符。与 ESCAPE '\' 搭配（同文件两处状态 seq 计数共用）。</summary>
-    private static string EscapeLike(string value) => value
-        .Replace(@"\", @"\\", StringComparison.Ordinal)
-        .Replace("%", @"\%", StringComparison.Ordinal)
-        .Replace("_", @"\_", StringComparison.Ordinal);
 
     public async ValueTask DisposeAsync() => await _dataSource.DisposeAsync();
 }

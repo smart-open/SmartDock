@@ -77,6 +77,10 @@ public sealed class FeatureGate : IFeatureGate
     private readonly object _cacheLock = new();
     private (long Version, DateTimeOffset LoadedAt, IReadOnlyDictionary<string, FeatureDefinition> Definitions)? _cache;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
+    // 版本号信任窗：窗内免查 feature_version。Snapshot 对 70 键逐个 Get，原实现每次
+    // GetDefinitions 都查一次版本号，一个快照 = 70 次版本号查询（S28.5 性能债）；
+    // 加信任窗后稳态快照零查库。窗内变更最坏延迟 5s（仍远小于 30s 口径）
+    private static readonly TimeSpan VersionTrustWindow = TimeSpan.FromSeconds(5);
 
     public FeatureGate(IFeatureStore store, ILicenseService license,
         IPluginReadiness plugins, TimeProvider? clock = null)
@@ -159,10 +163,19 @@ public sealed class FeatureGate : IFeatureGate
         {
             var now = _clock.GetUtcNow();
             if (_cache is { } cached
-                && now - cached.LoadedAt < CacheTtl
-                && cached.Version == _store.GetVersion())
+                && now - cached.LoadedAt < CacheTtl)
             {
-                return cached.Definitions;
+                if (now - cached.LoadedAt < VersionTrustWindow)
+                {
+                    return cached.Definitions;
+                }
+
+                if (cached.Version == _store.GetVersion())
+                {
+                    // 版本未变：刷新信任窗起点，下次版本号校验推迟到 5s 后
+                    _cache = (cached.Version, now, cached.Definitions);
+                    return cached.Definitions;
+                }
             }
 
             // 版本竞态：若「读版本→回源」之间发生写提交，旧定义会挂上新版本号，
