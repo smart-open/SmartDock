@@ -97,10 +97,20 @@ public sealed class FeatureStore : IFeatureStore
             """);
         command.Parameters.AddWithValue("key", key);
         var scopeValue = scope ?? new FeatureScope(string.Empty);
-        command.Parameters.AddWithValue("factory",
-            string.IsNullOrEmpty(scopeValue.Factory) ? DBNull.Value : scopeValue.Factory);
-        command.Parameters.AddWithValue("workshop", (object?)scopeValue.Workshop ?? DBNull.Value);
-        command.Parameters.AddWithValue("line", (object?)scopeValue.Line ?? DBNull.Value);
+        // 范围参数必须显式 NpgsqlDbType.Text：AddWithValue 塞 DBNull 时 Npgsql 不发类型，
+        // Postgres 对 "@p IS NOT NULL AND scope_id = @p" 推断不出 $n 类型（42P08）
+        command.Parameters.Add(new NpgsqlParameter("factory", NpgsqlTypes.NpgsqlDbType.Text)
+        {
+            Value = string.IsNullOrEmpty(scopeValue.Factory) ? DBNull.Value : scopeValue.Factory,
+        });
+        command.Parameters.Add(new NpgsqlParameter("workshop", NpgsqlTypes.NpgsqlDbType.Text)
+        {
+            Value = (object?)scopeValue.Workshop ?? DBNull.Value,
+        });
+        command.Parameters.Add(new NpgsqlParameter("line", NpgsqlTypes.NpgsqlDbType.Text)
+        {
+            Value = (object?)scopeValue.Line ?? DBNull.Value,
+        });
         using var reader = command.ExecuteReader();
         return reader.Read() ? reader.GetBoolean(0) : null;
     }

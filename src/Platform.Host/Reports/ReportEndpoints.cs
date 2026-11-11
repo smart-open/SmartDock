@@ -53,6 +53,13 @@ public static class ReportEndpoints
             ReportStore store, IUserScopeStore scopeStore, ILogger<ReportLog> logger,
             HttpContext context, CancellationToken cancellationToken) =>
         {
+            // 身份 401 先于报表解析 404：否则匿名可借 404/401 差异枚举合法报表码
+            var operatorId = OperatorContext.ParseOperator(context);
+            if (operatorId is null)
+            {
+                return Results.Json(new { error = "X-Operator header required" }, statusCode: 401);
+            }
+
             var def = await store.GetEnabledAsync(reportCode, cancellationToken);
             if (def is null)
             {
@@ -65,7 +72,6 @@ public static class ReportEndpoints
             }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var operatorId = OperatorContext.ParseOperator(context);
             try
             {
                 var allowedTables = await store.GetAllowedTablesAsync(cancellationToken);
@@ -103,6 +109,13 @@ public static class ReportEndpoints
             ReportStore store, IUserScopeStore scopeStore, ILogger<ReportLog> logger,
             HttpContext context, CancellationToken cancellationToken) =>
         {
+            // 同 query：身份检查前置，防报表码枚举
+            var operatorId = OperatorContext.ParseOperator(context);
+            if (operatorId is null)
+            {
+                return Results.Json(new { error = "X-Operator header required" }, statusCode: 401);
+            }
+
             var def = await store.GetEnabledAsync(reportCode, cancellationToken);
             if (def is null)
             {
@@ -117,7 +130,6 @@ public static class ReportEndpoints
             try
             {
                 var allowedTables = await store.GetAllowedTablesAsync(cancellationToken);
-                var operatorId = OperatorContext.ParseOperator(context);
                 var scopeIds = operatorId is { } id
                     ? await scopeStore.GetVisibleFactoryIdsAsync(id, cancellationToken)
                     : [];

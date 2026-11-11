@@ -169,6 +169,13 @@ public partial class MainWindow : Window
             var alarmsTask = _statusAlarmClient.GetAlarmsAsync(active: true);
             await Task.WhenAll(summaryTask, alarmsTask);
 
+            // GetSummaryAsync 网络失败返回 null 而不抛：null 也要按失败走断线降级展示，
+            // 否则服务挂了连接点还是绿的（状态条的核心职责就是诚实呈现连接态）
+            if (summaryTask.Result is null)
+            {
+                throw new System.Net.Http.HttpRequestException("snapshot summary unavailable");
+            }
+
             _lastSuccessUtc = DateTime.UtcNow;
             ConnectionDot.Fill = (System.Windows.Media.Brush)FindResource("StateGoodBrush");
             LastUpdateText.Text = $"最后更新 {DateTime.Now:HH:mm:ss}";

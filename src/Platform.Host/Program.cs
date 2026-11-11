@@ -104,6 +104,24 @@ builder.Services.AddSingleton(sp =>
 
 var app = builder.Build();
 
+// 全局异常兜底：Production 下无此兜底时未处理异常 = 500 空响应且不留日志，
+// 现场排障只能靠猜（第 20 轮修复声称合入但补丁未生效，第 22 轮审查实测 /api/features
+// 500 空响应发现缺失）。必须注册在管线最前，异常才能被换成结构化错误 + 日志。
+app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
+{
+    var errorFeature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+    var logger = context.RequestServices.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Program>>();
+    if (errorFeature?.Error is { } error)
+    {
+        // TraceId 贯穿（02 §10）：日志带 TraceId，响应头回写，现场报障可直接对日志
+        logger.LogError(error, "unhandled exception on {Method} {Path} trace={TraceId}",
+            context.Request.Method, context.Request.Path, context.TraceIdentifier);
+    }
+    context.Response.StatusCode = 500;
+    context.Response.ContentType = "application/json";
+    await context.Response.WriteAsJsonAsync(new { error = "internal server error" });
+}));
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

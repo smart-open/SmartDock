@@ -51,6 +51,10 @@ public partial class PointsPage : UserControl
 
         try
         {
+            // 每秒重建 ItemsSource 会让 DataGrid 归顶：轮询页必须保住用户滚动位置，
+            // 否则往下翻找 Bad 行时一秒被弹回顶部（现场不可用级 UX）
+            var scrollOffset = FindScrollViewer(SnapshotGrid)?.VerticalOffset ?? 0;
+
             var snapshot = await _apiClient.GetSnapshotAsync();
             var goodCount = 0;
             var rows = new List<SnapshotRow>(snapshot.Count);
@@ -67,6 +71,10 @@ public partial class PointsPage : UserControl
             }
 
             SnapshotGrid.ItemsSource = rows;
+            if (scrollOffset > 0)
+            {
+                FindScrollViewer(SnapshotGrid)?.ScrollToVerticalOffset(scrollOffset);
+            }
 
             // 汇总徽章：全 Good 绿，有异常红（红只用于真实异常，§0.5 铁律）
             var abnormal = snapshot.Count - goodCount;
@@ -90,6 +98,27 @@ public partial class PointsPage : UserControl
         {
             System.Threading.Volatile.Write(ref _refreshing, 0);
         }
+    }
+
+    /// <summary>DataGrid 的 ScrollViewer 在模板深处：递归找一次（每秒一次的开销可忽略）。</summary>
+    private static System.Windows.Controls.ScrollViewer? FindScrollViewer(System.Windows.DependencyObject source)
+    {
+        for (var index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(source); index++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(source, index);
+            if (child is System.Windows.Controls.ScrollViewer scrollViewer)
+            {
+                return scrollViewer;
+            }
+
+            var nested = FindScrollViewer(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private PointTrendBuffer GetOrCreateBuffer(long pointId)
