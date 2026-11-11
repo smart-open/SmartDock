@@ -31,6 +31,8 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, (Border Bar, Button Item)> _navItems = [];
     private StackPanel? _pluginNavHost;
     private int _pollSeconds;
+    // 状态条防重入（与页面轮询同口径）：1s tick vs 5s HTTP 超时，慢网会并发堆叠
+    private int _statusRefreshing;
 
     /// <summary>插件页注册表（M3 最小形态：内置演示页；外部 UI 插件装配随后续插件运行时接入）。</summary>
     private readonly List<Hosting.IPluginPageProvider> _pluginPages;
@@ -68,6 +70,10 @@ public partial class MainWindow : Window
         };
         _statusTimer.Tick += async (_, _) => await RefreshStatusBarAsync();
         _statusTimer.Start();
+
+        // 页面轮询都守「离开即停」，主壳同样不能漏：当前被进程退出兜底掩盖，
+        // 一旦关闭语义调整（多窗口会话）就是与大屏时钟 timer 同款的泄漏
+        Closed += (_, _) => _statusTimer.Stop();
 
         NavigateTo("overview");   // 默认进总览（操作员上班第一屏，S01）
     }
@@ -163,6 +169,11 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task RefreshStatusBarAsync()
     {
+        if (System.Threading.Interlocked.Exchange(ref _statusRefreshing, 1) == 1)
+        {
+            return;
+        }
+
         try
         {
             var summaryTask = _statusSnapshotClient.GetSummaryAsync();
@@ -190,6 +201,10 @@ public partial class MainWindow : Window
             LastUpdateText.Text = _lastSuccessUtc is { } last
                 ? $"数据已过期（{last.ToLocalTime():HH:mm:ss}）"
                 : "连接中…";
+        }
+        finally
+        {
+            System.Threading.Volatile.Write(ref _statusRefreshing, 0);
         }
     }
 

@@ -26,6 +26,9 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
     // 请求-应答超时：半开连接（拔网线/PLC 断电不发 RST）时 ReadAsync 会无限挂起，
     // 采集循环/写路径全部卡死且不产生 Bad、不触发重连——必须由传输层超时兜底（5.8）
     private const int SocketTimeoutMs = 3000;
+    // Modbus 规约 PDU 上限 253 字节，MBAP length 含 unitId → 最大 254：
+    // 畸形应答 length=0xFFFF 会 new byte[65534] 并试图读 64KB，必须上界拦截
+    private const int MaxMbapLength = 254;
 
     private readonly string _host;
     private readonly int _port;
@@ -54,9 +57,12 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
                 return new ConnectResult(true, null);
             }
 
+            // client 声明在 try 外：catch 里才能 Dispose（连接失败是重连循环常态，
+            // 不释放会按重试周期累积半初始化 socket 句柄）
+            TcpClient? client = null;
             try
             {
-                var client = new TcpClient();
+                client = new TcpClient();
                 await client.ConnectAsync(_host, _port, cancellationToken);
                 // 收发超时仅在传输层兜底：正常 PLC 应答远快于此，超时即按连接已死处理
                 client.SendTimeout = SocketTimeoutMs;
@@ -67,6 +73,8 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
             }
             catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException)
             {
+                // 连接失败是重连循环常态（1s→30s 封顶）：不 Dispose 会按周期累积半初始化句柄
+                client?.Dispose();
                 return new ConnectResult(false, ex.Message);
             }
         }
@@ -135,7 +143,9 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
             var value = ParseFloat32(registers, swapWords: parsed.Value.SwapWords);
             return new ReadValue(point.PointId, point.DeviceId, value, QualityCode.Good, DateTime.UtcNow);
         }
-        catch (Exception ex) when (ex is IOException or SocketException)
+        // 停机/读失败触发的 DisconnectAsync 可与在途读并发：流被释放后是 ObjectDisposed/NRE，
+        // 同样按「连接已死」归并断开重连（否则未分类异常会中断本轮采集）
+        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or NullReferenceException)
         {
             // 通信异常大概率连接已死：主动断开，让下轮轮询走重连（A1 审查项 4）
             await DisconnectAsync(CancellationToken.None);
@@ -153,7 +163,7 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
     {
         _transactionId++;
         var request = BuildReadRequest(_transactionId, _unitId, startAddress, count);
-        await _stream!.WriteAsync(request, cancellationToken);
+        await WriteStreamAsync(request, cancellationToken);
 
         var header = new byte[7];
         await ReadExactlyAsync(header, cancellationToken);
@@ -167,7 +177,7 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
         // MBAP: [tid(2) proto(2) length(2) unit(1)]，PDU = FC(1) + byteCount(1) + data
         // 坏响应保护：length 至少含 unitId+FC（A1 审查项 2）
         var pduLength = (header[4] << 8) | header[5];   // 含 unitId
-        if (pduLength < 2)
+        if (pduLength < 2 || pduLength > MaxMbapLength)
         {
             throw new IOException($"invalid MBAP length {pduLength}");
         }
@@ -245,7 +255,7 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
 
             _transactionId++;
             var request = BuildWriteRequest(_transactionId, _unitId, parsed.Value.RegisterAddress, words);
-            await _stream.WriteAsync(request, cancellationToken);
+            await WriteStreamAsync(request, cancellationToken);
 
             var header = new byte[7];
             await ReadExactlyAsync(header, cancellationToken);
@@ -257,7 +267,7 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
             }
 
             var pduLength = (header[4] << 8) | header[5];
-            if (pduLength < 2)
+            if (pduLength < 2 || pduLength > MaxMbapLength)
             {
                 throw new IOException($"invalid MBAP length {pduLength}");
             }
@@ -285,7 +295,8 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
 
             return new WriteResult(true, null);
         }
-        catch (Exception ex) when (ex is IOException or SocketException)
+        // 同读侧：断开竞态的 ObjectDisposed/NRE 按连接已死归并
+        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or NullReferenceException)
         {
             await DisconnectAsync(CancellationToken.None);
             return new WriteResult(false, ex.Message);
@@ -332,13 +343,44 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
         var offset = 0;
         while (offset < buffer.Length)
         {
-            var read = await _stream!.ReadAsync(buffer.AsMemory(offset), cancellationToken);
+            var read = await ReadStreamAsync(buffer.AsMemory(offset), cancellationToken);
             if (read == 0)
             {
                 throw new IOException("connection closed by peer");
             }
 
             offset += read;
+        }
+    }
+
+    // Socket.SendTimeout/ReceiveTimeout 只对同步收发生效，NetworkStream.ReadAsync/WriteAsync
+    // 完全忽略它们（.NET 官方行为）——半开连接防护必须自行实现：linked CTS + CancelAfter。
+    // 超时转 IOException 走「连接已死」路径；外部取消（停机）仍是 OperationCanceledException
+    private async Task<int> ReadStreamAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(SocketTimeoutMs);
+        try
+        {
+            return await _stream!.ReadAsync(buffer, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException($"socket read timeout after {SocketTimeoutMs}ms (half-open connection?)");
+        }
+    }
+
+    private async Task WriteStreamAsync(byte[] buffer, CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(SocketTimeoutMs);
+        try
+        {
+            await _stream!.WriteAsync(buffer, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException($"socket write timeout after {SocketTimeoutMs}ms (half-open connection?)");
         }
     }
 
@@ -370,7 +412,13 @@ public sealed class ModbusTcpDriver : IDeviceWriteDriver
             return null;
         }
 
-        return new ParsedAddress((ushort)registerAddress, WordCount: 2, SwapWords: byteOrder.Equals("CDAB", StringComparison.OrdinalIgnoreCase));
+        // 字序白名单：未知字序静默当 ABCD 会读回错位值且无诊断——配置错误必须报 bad address
+        return byteOrder.ToUpperInvariant() switch
+        {
+            "CDAB" => new ParsedAddress((ushort)registerAddress, WordCount: 2, SwapWords: true),
+            "ABCD" => new ParsedAddress((ushort)registerAddress, WordCount: 2, SwapWords: false),
+            _ => null,
+        };
     }
 
     private static float ParseFloat32(ushort[] registers, bool swapWords)

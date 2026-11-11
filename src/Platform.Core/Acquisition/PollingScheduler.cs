@@ -253,6 +253,9 @@ public sealed class PollingScheduler : IAsyncDisposable
             {
                 // 5.8：单轮失败不终止循环，记日志下一轮重试
                 connected = false;
+                // 异常路径同样要触发 OFFLINE 沿：只置本地标志不发通知，「离线→立即恢复」
+                // 的整段中断对报警系统不可见（报警源不能漏，C1）
+                NotifyConnectionChanged(entry.Device.DeviceId, entry.Device.DeviceCode, connected: false);
                 _logger.LogWarning(ex, "device {Device}: poll iteration failed, will reconnect",
                     entry.Device.DeviceCode);
             }

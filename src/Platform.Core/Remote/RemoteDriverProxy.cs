@@ -144,6 +144,14 @@ public sealed class RemoteDriverProxy : IDeviceWriteDriver
         {
             var reply = await _supervisor.Client.WriteAsync(
                 request, deadline: DateTime.UtcNow.AddSeconds(5), cancellationToken: cancellationToken);
+            // 空回复/条数不符 = 协议错位（版本不匹配/服务端 bug）：results[0] 会越界抛出，
+            // 违反「驱动实现不抛非取消异常」契约——按全部逐点失败返回，WriteGuard 留痕
+            if (reply.Results.Count != writes.Count)
+            {
+                var malformed = $"malformed reply: {reply.Results.Count} results for {writes.Count} writes";
+                return writes.Select(w => new WriteResult(false, malformed)).ToArray();
+            }
+
             var results = new WriteResult[reply.Results.Count];
             for (var i = 0; i < reply.Results.Count; i++)
             {

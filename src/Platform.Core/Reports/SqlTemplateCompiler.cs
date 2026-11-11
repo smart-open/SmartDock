@@ -41,6 +41,11 @@ public static class SqlTemplateCompiler
     private static readonly Regex ParamRegex =
         new(@"@([a-zA-Z_][a-zA-Z0-9_]*)", RegexOptions.Compiled);
 
+    // 注释剥离：FROM /*x*/ secret_table / FROM 换行 -- 注释 再接表名可让表名提取漏报，
+    // 白名单承诺被刻意绕过（8.2 防线 2 有缝）。扫描前先剥掉 --… 与 /*…*/ 注释
+    private static readonly Regex LineCommentRegex = new(@"--[^\r\n]*", RegexOptions.Compiled);
+    private static readonly Regex BlockCommentRegex = new(@"/\*.*?\*/", RegexOptions.Compiled | RegexOptions.Singleline);
+
     /// <summary>
     /// 编译报表模板。
     /// userParams：用户传入参数；scopeIds：平台计算的可见范围（用户不可传，覆盖同名模板参数）。
@@ -74,7 +79,10 @@ public static class SqlTemplateCompiler
 
         // 规则 2：表白名单——所有 FROM/JOIN 引用的表都必须在清单内
         // 先抹掉 @param 引用：参数名（如 @from）含关键字字样会被 TableRefRegex 误捕（@from AND → "FROM AND"）
+        // 再剥注释（先块后行）：注释里的 FROM/表名不参与白名单核对，防止借注释夹带绕过
         var textForTableScan = ParamRegex.Replace(compiledSql, "p");
+        textForTableScan = BlockCommentRegex.Replace(textForTableScan, " ");
+        textForTableScan = LineCommentRegex.Replace(textForTableScan, " ");
         var rejectedTables = TableRefRegex.Matches(textForTableScan)
             .Select(match => match.Groups[1].Value)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -163,7 +171,10 @@ public static class SqlTemplateCompiler
         {
             return def.Type switch
             {
-                "datetime" => DateTime.Parse(text),
+                // 文化无关 + 统一 UTC 口径：随服务器区域解析对 03/04/2026 语义相反，
+                // Kind=Unspecified 落 timestamptz 的时区解释取决于会话 TimeZone
+                "datetime" => DateTime.Parse(text, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal),
                 "int" => int.Parse(text),
                 "long" => long.Parse(text),
                 "string" => text,

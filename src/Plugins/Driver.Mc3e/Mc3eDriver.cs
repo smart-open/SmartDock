@@ -28,6 +28,8 @@ public sealed class Mc3eDriver : IDeviceDriver
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     // 请求-应答传输层超时：半开连接时 ReadAsync 会无限挂起，采集循环静默停产（5.8）
     private const int SocketTimeoutMs = 3000;
+    // 3E 帧应答数据上限（软元件点数上限 960 字 → 数据 1920B + 头 11B）：畸形帧拦截
+    private const int MaxResponseFrameBytes = 2048;
 
     private readonly string _host;
     private readonly int _port;
@@ -56,9 +58,12 @@ public sealed class Mc3eDriver : IDeviceDriver
                 return new ConnectResult(true, null);
             }
 
+            // client 声明在 try 外：catch 里才能 Dispose（连接失败是重连循环常态，
+            // 不释放会按重试周期累积半初始化 socket 句柄）
+            TcpClient? client = null;
             try
             {
-                var client = new TcpClient();
+                client = new TcpClient();
                 await client.ConnectAsync(_host, _port, cancellationToken);
                 client.SendTimeout = SocketTimeoutMs;
                 client.ReceiveTimeout = SocketTimeoutMs;
@@ -68,6 +73,8 @@ public sealed class Mc3eDriver : IDeviceDriver
             }
             catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException)
             {
+                // 连接失败是重连循环常态：不 Dispose 会按周期累积半初始化句柄
+                client?.Dispose();
                 return new ConnectResult(false, ex.Message);
             }
         }
@@ -137,7 +144,9 @@ public sealed class Mc3eDriver : IDeviceDriver
             var value = ParseFloat32(words, swapWords: parsed.Value.SwapWords);
             return new ReadValue(point.PointId, point.DeviceId, value, QualityCode.Good, DateTime.UtcNow);
         }
-        catch (Exception ex) when (ex is IOException or SocketException)
+        // 停机/读失败触发的 DisconnectAsync 可与在途读并发：流被释放后是 ObjectDisposed/NRE，
+        // 同样按「连接已死」归并断开重连（否则未分类异常会中断本轮采集）
+        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or NullReferenceException)
         {
             // 通信异常大概率连接已死：主动断开，让下轮轮询走重连（与 ModbusTcpDriver 同策略）
             await DisconnectAsync(CancellationToken.None);
@@ -188,7 +197,7 @@ public sealed class Mc3eDriver : IDeviceDriver
         request[18] = (byte)((wordCount >> 8) & 0xFF);
         request[19] = (byte)((wordCount >> 16) & 0xFF);
 
-        await _stream!.WriteAsync(request, cancellationToken);
+        await WriteStreamAsync(request, cancellationToken);
 
         // 应答固定头 9 字节 + 结束代码 2 字节 = 11 字节一次读齐
         // （头 9 字节后紧跟结束代码，拆两次读徒增边界风险——此前 header[9] 越界即此因）
@@ -208,6 +217,11 @@ public sealed class Mc3eDriver : IDeviceDriver
         }
 
         var dataLength = wordCount * 2;
+        if (dataLength + 11 > MaxResponseFrameBytes)
+        {
+            throw new IOException($"response frame too large: {dataLength + 11} bytes");
+        }
+
         var data = new byte[dataLength];
         await ReadExactlyAsync(data, cancellationToken);
 
@@ -225,13 +239,44 @@ public sealed class Mc3eDriver : IDeviceDriver
         var offset = 0;
         while (offset < buffer.Length)
         {
-            var read = await _stream!.ReadAsync(buffer.AsMemory(offset), cancellationToken);
+            var read = await ReadStreamAsync(buffer.AsMemory(offset), cancellationToken);
             if (read == 0)
             {
                 throw new IOException("connection closed by peer");
             }
 
             offset += read;
+        }
+    }
+
+    // Socket.ReceiveTimeout 只对同步收发生效，NetworkStream.ReadAsync/WriteAsync 完全
+    // 忽略它们（.NET 官方行为）——半开连接防护必须自行实现：linked CTS + CancelAfter。
+    // 超时转 IOException 走「连接已死」路径；外部取消（停机）仍是 OperationCanceledException
+    private async Task<int> ReadStreamAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(SocketTimeoutMs);
+        try
+        {
+            return await _stream!.ReadAsync(buffer, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException($"socket read timeout after {SocketTimeoutMs}ms (half-open connection?)");
+        }
+    }
+
+    private async Task WriteStreamAsync(byte[] buffer, CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(SocketTimeoutMs);
+        try
+        {
+            await _stream!.WriteAsync(buffer, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException($"socket write timeout after {SocketTimeoutMs}ms (half-open connection?)");
         }
     }
 
@@ -292,8 +337,13 @@ public sealed class Mc3eDriver : IDeviceDriver
             return null;
         }
 
-        return new ParsedAddress(deviceCode.Value, deviceNumber, WordCount: 2,
-            SwapWords: byteOrder.Equals("CDAB", StringComparison.OrdinalIgnoreCase));
+        // 字序白名单：未知字序静默当 ABCD 会读回错位值且无诊断——配置错误必须报 bad address
+        return byteOrder.ToUpperInvariant() switch
+        {
+            "CDAB" => new ParsedAddress(deviceCode.Value, deviceNumber, WordCount: 2, SwapWords: true),
+            "ABCD" => new ParsedAddress(deviceCode.Value, deviceNumber, WordCount: 2, SwapWords: false),
+            _ => null,
+        };
     }
 
     private static float ParseFloat32(ushort[] words, bool swapWords)

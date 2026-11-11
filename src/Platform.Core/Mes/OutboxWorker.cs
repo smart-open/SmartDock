@@ -109,11 +109,28 @@ public sealed class OutboxWorker(
                 catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
                 {
                     // 适配器内部超时（HttpClient TaskCanceledException）：结果未知 → 对账
-                    await store.SuspectAsync(message.Id, "timeout", stoppingToken);
+                    // SuspectAsync 自身也可能因 DB 抖动抛出：直接逃出 ExecuteAsync 会触发
+                    // BackgroundServiceExceptionBehavior.StopHost（整个 Host 停机、采集陪葬），
+                    // 与下方通用 catch 的兜底口径一致——留在 Sending 交给 ReconcileScheduler 卡死扫描
+                    try
+                    {
+                        await store.SuspectAsync(message.Id, "timeout", stoppingToken);
+                    }
+                    catch (Exception suspectEx)
+                    {
+                        logger.LogError(suspectEx, "outbox {MsgId} suspect persist failed, left in Sending for reconcile", message.Id);
+                    }
                 }
                 catch (TimeoutException ex)
                 {
-                    await store.SuspectAsync(message.Id, ex.Message, stoppingToken);
+                    try
+                    {
+                        await store.SuspectAsync(message.Id, ex.Message, stoppingToken);
+                    }
+                    catch (Exception suspectEx)
+                    {
+                        logger.LogError(suspectEx, "outbox {MsgId} suspect persist failed, left in Sending for reconcile", message.Id);
+                    }
                 }
                 catch (Exception ex)
                 {

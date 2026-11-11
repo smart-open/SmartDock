@@ -319,8 +319,7 @@
         <Setter Property="RowHeight" Value="30" />
         <Setter Property="ColumnHeaderHeight" Value="32" />
         <Setter Property="HeadersVisibility" Value="Column" />
-        <Setter Property="GridLinesVisibility" Value="HorizontalLines" />
-        <Setter Property="HorizontalGridLinesBrush" Value="#1E2A35" />
+        <!-- 横向网格线已移除：自定义行模板不绘制网格线，声明了也画不出来（与渲染矛盾）；行分隔由斑马纹承担 -->
         <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
         <Setter Property="AlternatingRowBackground" Value="{StaticResource BgPanelAltBrush}" />
         <Setter Property="RowBackground" Value="Transparent" />

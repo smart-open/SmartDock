@@ -21,6 +21,10 @@ public partial class DashboardWindow : Window
     private readonly AlarmApiClient _alarmClient;
     private readonly DeviceApiClient _deviceClient;
     private readonly DispatcherTimer _refreshTimer;
+    private readonly DispatcherTimer _clockTimer;
+    // 1s tick vs 5s HTTP 超时：慢网时最多 5 个 RefreshAsync 并发在飞，每个完成者都会
+    // 往趋势窗口塞重复样本并全量重建点阵——防重入守卫与 Overview/Points 页同口径
+    private int _refreshing;
     private readonly List<double> _goodSamples = [];
     private DateTime? _lastSuccessUtc;
 
@@ -35,12 +39,18 @@ public partial class DashboardWindow : Window
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _refreshTimer.Start();
 
-        var clockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        clockTimer.Tick += (_, _) => UpdateClock();
-        clockTimer.Start();
+        _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _clockTimer.Tick += (_, _) => UpdateClock();
+        _clockTimer.Start();
         UpdateClock();
 
-        Closed += (_, _) => _refreshTimer.Stop();
+        // 两个 timer 都必须停：clockTimer 若漏停，Esc 关窗后仍每秒 Tick，窗口对象图
+        // 被闭包钉住无法回收，反复开/关大屏会累积泄漏（7×24 挂墙场景持续恶化）
+        Closed += (_, _) =>
+        {
+            _refreshTimer.Stop();
+            _clockTimer.Stop();
+        };
         Loaded += (_, _) => _ = RefreshAsync();
     }
 
@@ -55,6 +65,11 @@ public partial class DashboardWindow : Window
 
     private async Task RefreshAsync()
     {
+        if (System.Threading.Interlocked.Exchange(ref _refreshing, 1) == 1)
+        {
+            return;
+        }
+
         try
         {
             var summaryTask = _snapshotClient.GetSummaryAsync();
@@ -62,19 +77,24 @@ public partial class DashboardWindow : Window
             var devicesTask = _deviceClient.GetDevicesAsync();
             await Task.WhenAll(summaryTask, alarmsTask, devicesTask);
 
-            var summary = summaryTask.Result!;
+            // summary 契约是「失败返回 null 不抛」：null 只降级可用率卡，
+            // 报警/点阵两路数据照常渲染（此前 NRE 会让整帧误走断线冻结）
+            var summary = summaryTask.Result;
+            if (summary is { } summaryValue)
+            {
+                AvailabilityGauge.Value = summaryValue.Total == 0 ? 0 : summaryValue.Good * 100.0 / summaryValue.Total;
+                AvailabilityDetailText.Text = $"正常 {summaryValue.Good} / 总 {summaryValue.Total}（异常 {summaryValue.Bad + summaryValue.Uncertain + summaryValue.Stale}）";
+
+                _goodSamples.Add(summaryValue.Good);
+                if (_goodSamples.Count > MaxTrendSamples)
+                {
+                    _goodSamples.RemoveAt(0);
+                }
+                TrendPanel.Values = [.. _goodSamples];
+            }
+
             var alarms = alarmsTask.Result;
             var devices = devicesTask.Result;
-
-            AvailabilityGauge.Value = summary.Total == 0 ? 0 : summary.Good * 100.0 / summary.Total;
-            AvailabilityDetailText.Text = $"正常 {summary.Good} / 总 {summary.Total}（异常 {summary.Bad + summary.Uncertain + summary.Stale}）";
-
-            _goodSamples.Add(summary.Good);
-            if (_goodSamples.Count > MaxTrendSamples)
-            {
-                _goodSamples.RemoveAt(0);
-            }
-            TrendPanel.Values = [.. _goodSamples];
 
             RenderAlarms(alarms);
             RenderDeviceDots(devices);
@@ -92,6 +112,10 @@ public partial class DashboardWindow : Window
             StaleText.Text = _lastSuccessUtc is { } last
                 ? $"数据已过期（最后更新 {last.ToLocalTime():HH:mm:ss}）"
                 : "数据已过期（尚未取得任何数据）";
+        }
+        finally
+        {
+            System.Threading.Volatile.Write(ref _refreshing, 0);
         }
     }
 
