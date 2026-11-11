@@ -111,7 +111,7 @@ public sealed class WorkOrderStore
                 "SELECT status FROM work_order WHERE id = @id FOR UPDATE", connection, transaction);
             lockOrder.Parameters.AddWithValue("id", orderId);
             var orderStatus = (short)((await lockOrder.ExecuteScalarAsync(cancellationToken)) ?? (short)-1);
-            if (orderStatus is not (0 or 1))
+            if (!CanReport(orderStatus))
             {
                 throw new InvalidOperationException($"order {orderId} not active (status={orderStatus})");
             }
@@ -178,6 +178,12 @@ public sealed class WorkOrderStore
             throw;
         }
     }
+
+    /// <summary>
+    /// 6.2 报工状态闸：仅待开工(0)/进行中(1)可报工。SubmitReportAsync 锁内判据的唯一来源
+    /// ——状态机扩展（如新增"暂停可报"）只改这里，端点/测试自动同源。
+    /// </summary>
+    public static bool CanReport(short orderStatus) => orderStatus is 0 or 1;
 
     public sealed record ReportPayload(long OrderId, int StepNo, decimal GoodQty, decimal ScrapQty, int ReportSeq, string Source);
 

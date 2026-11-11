@@ -5,6 +5,7 @@ using System.Net;
 using Microsoft.Extensions.Options;
 using Platform.Abstractions;
 using Platform.Core.Mes;
+using Platform.Data;
 using Xunit;
 
 namespace Platform.Tests;
@@ -144,19 +145,22 @@ public class RestMesAdapterTests
     }
 }
 
+/// <summary>
+/// 6.6 对账任务 3 告警阈值：直接断言生产判据 ReconcileAlertPolicy.ShouldAlert
+/// （MesReconcileStore.ReconcileAsync 落库 alert 字段就是调它），不再本地重实现规则。
+/// </summary>
 public class ReconcileThresholdTests
-    {
+{
     [Theory]
     [InlineData(0, 100, false)]     // 全闭环：不告警
     [InlineData(1, 5000, false)]    // 0.02% < 0.5% 且 ≤10 条
     [InlineData(11, 5000, true)]    // 11 条 > 10 条 → 告警（6.6 任务 3）
     [InlineData(1, 100, true)]      // 1% > 0.5% → 告警
     [InlineData(10, 5000, false)]   // 恰 10 条且 0.2%：不告警（>10 才告）
+    [InlineData(0, 0, false)]       // 当日无报文：不告警（除零保护）
+    [InlineData(6, 500, true)]      // 1.2% > 0.5% 占比告警（条数不超 10 也告：两条件取或）
     public void AlertThreshold_MatchesSpec(int diffCount, int totalSent, bool expectedAlert)
     {
-        // 与 MesReconcileStore.ReconcileAsync 内判定一致：>0.5% 或 >10 条
-        var diffRatio = totalSent == 0 ? 0m : Math.Round(diffCount / (decimal)totalSent, 4);
-        var alert = diffCount > 10 || diffRatio > 0.005m;
-        Assert.Equal(expectedAlert, alert);
+        Assert.Equal(expectedAlert, ReconcileAlertPolicy.ShouldAlert(diffCount, totalSent));
     }
 }

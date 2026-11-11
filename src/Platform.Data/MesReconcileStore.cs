@@ -91,9 +91,9 @@ public sealed class MesReconcileStore
                 var pending = reader.GetInt32(5);
                 var diffCount = suspended + dead;
 
-                // 6.6 对账任务 3：差异 > 0.5% 或 > 10 条 → 告警
+                // 6.6 对账任务 3：差异 > 0.5% 或 > 10 条 → 告警（判据唯一来源 ReconcileAlertPolicy）
                 var diffRatio = totalSent == 0 ? 0m : Math.Round(diffCount / (decimal)totalSent, 4);
-                var alert = diffCount > 10 || diffRatio > 0.005m;
+                var alert = ReconcileAlertPolicy.ShouldAlert(diffCount, totalSent);
 
                 results.Add(new ReconcileResult(bizDate, bizType, totalSent, acked, suspended, dead, pending, diffCount, diffRatio, alert));
             }
@@ -135,4 +135,21 @@ public sealed class MesReconcileStore
     }
 
     public async ValueTask DisposeAsync() => await _dataSource.DisposeAsync();
+}
+
+/// <summary>
+/// 6.6 对账任务 3 的告警判据唯一来源：差异行数 > 10 条 或 差异占比 > 0.5%
+/// （占比四舍五入到 4 位小数后比较，与 mes_reconcile.diff_ratio 落库精度一致）。
+/// Extract 自 MesReconcileStore 内联判定——阈值调整/告警口径演进只改这里。
+/// </summary>
+public static class ReconcileAlertPolicy
+{
+    public const int MaxDiffCountWithoutAlert = 10;
+    public const decimal AlertRatioThreshold = 0.005m;
+
+    public static bool ShouldAlert(int diffCount, int totalSent)
+    {
+        var diffRatio = totalSent == 0 ? 0m : Math.Round(diffCount / (decimal)totalSent, 4);
+        return diffCount > MaxDiffCountWithoutAlert || diffRatio > AlertRatioThreshold;
+    }
 }

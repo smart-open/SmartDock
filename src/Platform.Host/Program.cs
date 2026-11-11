@@ -15,6 +15,7 @@ using Platform.Host.License;
 using Platform.Core.License;
 using Platform.Core.Features;
 using Platform.Host.Alarms;
+using Platform.Host.Admin;
 using Platform.Core.Alarms;
 using Platform.Host.Identity;
 using Platform.Core.Security;
@@ -140,6 +141,7 @@ app.MapFeatureEndpoints();
 app.MapLicenseEndpoints();
 app.MapAlarmEndpoints();
 app.MapIdentityEndpoints();
+app.MapAdminEndpoints();
 app.MapControllers();
 
 app.Run();

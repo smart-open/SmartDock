@@ -38,7 +38,16 @@ public sealed record DriverManifest(
     string DriverId,
     string AssemblyPath,
     /// <summary>x86 = 必须进 32 位子进程；any = 可随主进程。</summary>
-    string Arch);
+    string Arch)
+{
+    /// <summary>
+    /// 5.11.4 ② arch 判定的唯一来源：x86 manifest 必须进 32 位子进程（雷赛/正运动/VisionPro
+    /// 都是 x86 原生 SDK，装进 x64 主进程直接崩）。宿主位数选择（RemoteDriverSupervisor）与本
+    /// 判定共用此属性，规则改动只动这里。未知值按 x64 处理——manifest 出错宁可装错子进程
+    /// 也不能把 x86 卡拉进 x64 主进程。
+    /// </summary>
+    public bool Requires32BitProcess => string.Equals(Arch, "x86", StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>宿主→子进程心跳应答（子进程存活 + 当前驱动状态摘要）。</summary>
 public sealed record HostPingResult(bool Alive, string? LastError);

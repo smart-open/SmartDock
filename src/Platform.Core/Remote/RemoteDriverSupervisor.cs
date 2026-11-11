@@ -63,6 +63,28 @@ public sealed class RemoteDriverSupervisor : IAsyncDisposable
         _logger = logger;
     }
 
+    /// <summary>
+    /// 按 manifest arch 选择宿主 exe（5.11.4 ②）：x86 驱动必须进 32 位宿主，x86 宿主
+    /// 缺位直接拒绝拉起（把 x86 卡装进 x64 进程 = 子进程启动即崩 + 无限重启风暴）。
+    /// arch 判定唯一来源是 DriverManifest.Requires32BitProcess。
+    /// </summary>
+    public static string SelectHostExe(DriverManifest manifest, string x64ExePath, string? x86ExePath)
+    {
+        if (!manifest.Requires32BitProcess)
+        {
+            return x64ExePath;
+        }
+
+        if (string.IsNullOrWhiteSpace(x86ExePath))
+        {
+            throw new NotSupportedException(
+                $"driver {manifest.DriverId} requires a 32-bit host process (manifest arch={manifest.Arch}) " +
+                "but no x86 host exe was provided (5.11.4 ②)");
+        }
+
+        return x86ExePath;
+    }
+
     /// <summary>拉起子进程并等待 gRPC 就绪。幂等：已在跑直接返回。</summary>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {

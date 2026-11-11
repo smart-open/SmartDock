@@ -207,11 +207,36 @@ function Run-S6 {
 }
 
 function Run-S7 {
-    # S7 停机排空：Host 优雅停止 -> 队列残余落库、无丢数（2.6A 停止排空语义）
-    Write-Host "=== S7 停机排空与收尾 ===" -ForegroundColor Cyan
-    Stop-Host
+    # S7 受控停机：POST /api/admin/shutdown（V014 platform:shutdown 闸）→ StopApplication
+    # 优雅停机链 → 调度器停 + 流水线排空（队列残余落库）→ 进程退出（2.6A 停止排空语义）。
+    # 此前用 Stop-Process -Force 假冒停机，StopAsync 排空路径从未被真实触发（S28.5 欠账）
+    Write-Host "=== S7 受控停机与收尾 ===" -ForegroundColor Cyan
+    $login = Invoke-RestMethod -Uri "$Api/api/auth/login" -Method Post `
+        -Body (@{ userCode = "admin"; password = "Admin@123" } | ConvertTo-Json) `
+        -ContentType "application/json"
+    $headers = @{ "X-Operator" = $login.userId }
 
-    # 语义：kill 之后再取基线，间隔 4s 复查，行数必须完全冻结（强杀前排空批次已在 kill 前落库）
+    # 闸 2 权限验证：operator 身份（admin 角色）可过；无身份请求必须 401
+    $anonRejected = $false
+    try {
+        Invoke-RestMethod -Uri "$Api/api/admin/shutdown" -Method Post | Out-Null
+    } catch {
+        $anonRejected = $true
+    }
+    Assert-Scenario "S7.0a 匿名停机被拒" $anonRejected "no X-Operator -> 401"
+
+    Invoke-RestMethod -Uri "$Api/api/admin/shutdown" -Method Post -Headers $headers | Out-Null
+
+    # 优雅退出窗口：排空 + 有限重试在 15s 内应完成
+    $exited = $false
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-Process -Name "Platform.Host" -ErrorAction SilentlyContinue)) { $exited = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert-Scenario "S7.0b 受控停机优雅退出" $exited "process exited via /api/admin/shutdown"
+
+    # 语义：进程退出后行数必须完全冻结（排空批次已在退出前落库）
     Start-Sleep -Seconds 2
     $rowsBefore = Invoke-ScalarFile "deploy/sql/scenarios/q_rows_total.sql"
     Start-Sleep -Seconds 4
