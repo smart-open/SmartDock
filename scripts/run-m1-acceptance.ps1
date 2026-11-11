@@ -3,6 +3,13 @@
 #   powershell scripts/run-m1-acceptance.ps1 -Mode smoke     # 快速通道：20 台起量 + 10 次断线（约 20 min）
 #   powershell scripts/run-m1-acceptance.ps1 -Mode full      # 完整验收：72 h 采样 + 30 次断线
 # 报告：_acceptance_report.txt（附 12.9.2 实测表回填建议值）
+#
+# S29.2 长跑护栏（上次 24h soak 把开发机跑死机的整改）：
+#   1. 启动门槛：系统可用内存 < 6 GB 拒绝启动（开发机常态只剩 ~4.5 GB，
+#      采样循环里反复 dotnet CLI 冷启动 + IDE 常驻是内存提交压力的主因）
+#   2. DB 指标降频：dotnet run 冷启动从每 30s 两次降到每 5min 两次（24h 从 5760 次降到 576 次）
+#   3. 运行中护栏：Host RSS > 1500 MB 或系统可用内存 < 2 GB 立即中止并出报告
+#   4. 断线重连轮次之间休息 30s，避免恢复判定风暴连击
 param(
     [ValidateSet("smoke", "full")]
     [string]$Mode = "smoke",
@@ -97,6 +104,15 @@ function Get-DbLatencyMs {
 }
 
 Write-Host "=== M1-10 验收（$Mode）：build + 20 台基线 ===" -ForegroundColor Cyan
+
+# 启动门槛（S29.2.1）：可用内存不足直接拒绝，不能带着内存压力起 24h 长跑
+$freeRamStartGB = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
+if ($freeRamStartGB -lt 6) {
+    throw ("soak 启动门槛不满足：系统可用内存 {0:N1} GB < 6 GB。" -f $freeRamStartGB +
+        " 请先关闭 IDE / 浏览器 / 休眠的旧 Host 等大内存进程再跑（S29.2 死机整改）")
+}
+Write-Host ("启动门槛通过：可用内存 {0:N1} GB" -f $freeRamStartGB)
+
 Get-Process -Name "LoadSimulator", "Platform.Host" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
@@ -134,22 +150,38 @@ if (-not $ready) { throw "baseline not ready, abort" }
 Write-Host "=== A1 采样阶段（$([int]($SampleDurationSec/60)) min）===" -ForegroundColor Cyan
 $sampleCount = 0
 $jitterSamples = @()
+$script:abortReason = $null
 $endTime = (Get-Date).AddSeconds($SampleDurationSec)
 while ((Get-Date) -lt $endTime) {
     $sampleCount++
-
-    # 采集周期抖动：1 s 周期下，用最近落库行时间间隔 P99 代理（12.9.2 第 1 项）
-    # ts 相减得 interval，转毫秒数（EXTRACT EPOCH * 1000）才能做数值 P99
-    $jitter = dotnet run --project tools/DbInit --no-build -- --scalar "SELECT COALESCE(MAX(EXTRACT(EPOCH FROM delta_ms) * 1000), 0) FROM (SELECT ts - LAG(ts) OVER (PARTITION BY device_id, point_id ORDER BY ts) AS delta_ms FROM point_history WHERE ts > now() - interval '2 minutes') t WHERE delta_ms IS NOT NULL"
-    $jitterSamples += [double]($jitter | Select-Object -First 1)
 
     $rss = Get-HostRssMB
     if ($null -ne $rss) {
         if ($null -eq $script:rssBaseMB) { $script:rssBaseMB = $rss }
         if ($rss -gt $script:rssMaxMB) { $script:rssMaxMB = $rss }
+        # 运行护栏（S29.2.3）：Host 泄漏征兆立即止损，不让长跑拖死开发机
+        if ($rss -gt 1500) {
+            $script:abortReason = "Host RSS ${rss} MB 超过 1500 MB 护栏，疑似泄漏，中止长跑"
+            break
+        }
     }
 
-    $script:dbLatencySamples += (Get-DbLatencyMs)
+    $freeRamGB = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
+    if ($freeRamGB -lt 2) {
+        $script:abortReason = ("系统可用内存 {0:N1} GB 低于 2 GB 护栏，中止长跑防死机" -f $freeRamGB)
+        break
+    }
+
+    # DB 指标降频（S29.2.2）：每 10 个采样点（5min）跑一次 dotnet CLI 冷启动，
+    # RSS/快照指标不受影响仍每 30s（纯本地调用，零开销）
+    if (($sampleCount % 10) -eq 1) {
+        # 采集周期抖动：1 s 周期下，用最近落库行时间间隔 P99 代理（12.9.2 第 1 项）
+        # ts 相减得 interval，转毫秒数（EXTRACT EPOCH * 1000）才能做数值 P99
+        $jitter = dotnet run --project tools/DbInit --no-build -- --scalar "SELECT COALESCE(MAX(EXTRACT(EPOCH FROM delta_ms) * 1000), 0) FROM (SELECT ts - LAG(ts) OVER (PARTITION BY device_id, point_id ORDER BY ts) AS delta_ms FROM point_history WHERE ts > now() - interval '2 minutes') t WHERE delta_ms IS NOT NULL"
+        $jitterSamples += [double]($jitter | Select-Object -First 1)
+
+        $script:dbLatencySamples += (Get-DbLatencyMs)
+    }
 
     try {
         $summary = Get-SnapshotSummary
@@ -160,35 +192,49 @@ while ((Get-Date) -lt $endTime) {
     Start-Sleep -Seconds $SampleIntervalSec
 }
 
-$jitterSorted = $jitterSamples | Sort-Object
-$script:pollJitterP99 = [math]::Round($jitterSorted[[int]($jitterSorted.Count * 0.99) - 1], 0)
 $rssGrowth = [math]::Round($script:rssMaxMB - $script:rssBaseMB, 1)
-$dbLatencyMax = [math]::Round(($script:dbLatencySamples | Measure-Object -Maximum).Maximum, 3)
 
-Write-Host "=== A2 断线重连 $ReconnectCount 次 ===" -ForegroundColor Cyan
-$reconnectOk = 0
-for ($i = 1; $i -le $ReconnectCount; $i++) {
-    Stop-Process -Id $simProc.Id -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds $ReconnectDownSec
+if ($script:abortReason) {
+    # 护栏中止：如实记 FAIL，跳过 A2（继续跑只会加重系统压力）
+    # 哨兵值让 A1.1/A1.4 如实判 FAIL（未测完的指标不能算 PASS）
+    $script:pollJitterP99 = 9999
+    $dbLatencyMax = 999
+    Assert-Acceptance "A1 资源护栏" $false $script:abortReason
+    Assert-Acceptance "A2 断线重连" $false "因资源护栏中止跳过"
+}
+else {
+    $jitterSorted = $jitterSamples | Sort-Object
+    $script:pollJitterP99 = [math]::Round($jitterSorted[[int]($jitterSorted.Count * 0.99) - 1], 0)
+    $dbLatencyMax = [math]::Round(($script:dbLatencySamples | Measure-Object -Maximum).Maximum, 3)
 
-    # 复活模拟器（新进程同端口）
-    $simProc = Start-Process "tools\LoadSimulator\bin\Debug\net8.0\LoadSimulator.exe" -ArgumentList "5100", "20" -PassThru -WindowStyle Hidden
-    if (-not (Wait-Port 5100 -TimeoutSec 15)) { Write-Host "  round $i sim fail"; continue }
+    Write-Host "=== A2 断线重连 $ReconnectCount 次 ===" -ForegroundColor Cyan
+    $reconnectOk = 0
+    for ($i = 1; $i -le $ReconnectCount; $i++) {
+        Stop-Process -Id $simProc.Id -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds $ReconnectDownSec
 
-    $recovered = $false
-    $deadline = (Get-Date).AddSeconds($ReconnectRecoverTimeoutSec)
-    while ((Get-Date) -lt $deadline) {
-        try {
-            $summary = Get-SnapshotSummary
-            if ($summary.total -eq 800 -and $summary.good -eq 800) { $recovered = $true; break }
-        } catch { }
-        Start-Sleep -Seconds 2
-    }
-    if ($recovered) {
-        $reconnectOk++
-        Write-Host "  round $i OK" -ForegroundColor Green
-    } else {
-        Write-Host "  round $i RECOVER TIMEOUT" -ForegroundColor Red
+        # 复活模拟器（新进程同端口）
+        $simProc = Start-Process "tools\LoadSimulator\bin\Debug\net8.0\LoadSimulator.exe" -ArgumentList "5100", "20" -PassThru -WindowStyle Hidden
+        if (-not (Wait-Port 5100 -TimeoutSec 15)) { Write-Host "  round $i sim fail"; continue }
+
+        $recovered = $false
+        $deadline = (Get-Date).AddSeconds($ReconnectRecoverTimeoutSec)
+        while ((Get-Date) -lt $deadline) {
+            try {
+                $summary = Get-SnapshotSummary
+                if ($summary.total -eq 800 -and $summary.good -eq 800) { $recovered = $true; break }
+            } catch { }
+            Start-Sleep -Seconds 2
+        }
+        if ($recovered) {
+            $reconnectOk++
+            Write-Host "  round $i OK" -ForegroundColor Green
+        } else {
+            Write-Host "  round $i RECOVER TIMEOUT" -ForegroundColor Red
+        }
+
+        # 轮次间休息（S29.2.4）：恢复判定通过后给系统喘息窗口
+        Start-Sleep -Seconds 30
     }
 }
 

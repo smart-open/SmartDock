@@ -35,7 +35,8 @@ try {
     do {
         Start-Sleep -Seconds 1
         $snapshot = Invoke-RestMethod "http://localhost:5000/api/snapshot"
-        $goodCount = @($snapshot | Where-Object { $_.quality -eq 'Good' }).Count
+        # API 把 QualityCode 枚举序列化成数字（0=Good），字符串比较会把全 Good 误判为 0
+        $goodCount = @($snapshot | Where-Object { $_.quality -eq 'Good' -or $_.quality -eq 0 }).Count
     } while ($goodCount -lt $snapshot.Count -and (Get-Date) -lt $deadline)
 
     Write-Host "snapshot points: $($snapshot.Count), good: $goodCount"

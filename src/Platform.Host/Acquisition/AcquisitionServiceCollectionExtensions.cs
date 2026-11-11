@@ -20,7 +20,15 @@ public static class AcquisitionServiceCollectionExtensions
         services.AddSingleton<PointHistoryCopyWriter>(serviceProvider =>
         {
             var connectionString = serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("Platform");
-            return new PointHistoryCopyWriter(connectionString!);
+            var writer = new PointHistoryCopyWriter(connectionString!);
+            var logger = serviceProvider.GetRequiredService<ILogger<PointHistoryCopyWriter>>();
+            // 毒批观测面：冲突说明上游重复投递/时钟回拨，如实告警但不影响流水线状态机
+            //（S28.5 欠账项：COPY 直插主表的确定性失败会让有界队列背压拖死全部设备）
+            writer.ConflictsDetected = (batchSize, conflicts) =>
+                logger.LogWarning(
+                    "point_history poison batch handled: {Batch} rows, {Conflicts} duplicates kept-first",
+                    batchSize, conflicts);
+            return writer;
         });
 
         // 有界队列流水线：设备归属随 ReadValue 走，不再闭包硬编码（R1 修复项 1）
